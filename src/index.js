@@ -42,7 +42,14 @@ const adminMiddleware = async (c, next) => {
 
 // --- Helpers ---
 
-const ADMIN_PASSWORD = 'admin' // Default password
+async function getAdminPassword(env) {
+    const pass = await env.MINI_KV.get('admin:password')
+    return pass || 'admin'
+}
+
+async function updateAdminPassword(env, newPass) {
+    await env.MINI_KV.put('admin:password', newPass)
+}
 
 async function verifyToken(apiToken) {
     try {
@@ -343,6 +350,11 @@ app.get('/logout', (c) => {
     return c.redirect('/login')
 })
 
+app.get('/admin/logout', (c) => {
+    deleteCookie(c, 'admin_session')
+    return c.redirect('/admin')
+})
+
 // --- Admin Routes ---
 
 app.get('/admin', (c) => {
@@ -388,8 +400,17 @@ ${commonHead}
     <div class="max-w-4xl mx-auto space-y-6">
         <header class="flex justify-between items-center glass-card p-4">
             <h1 class="text-2xl font-bold text-pink-500">Admin Dashboard</h1>
-            <button onclick="document.cookie='admin_session=; path=/; max-age=0'; location.reload()" class="text-red-400 text-sm">Logout</button>
+            <a href="/admin/logout" class="text-red-400 text-sm">Logout</a>
         </header>
+
+        <!-- Admin Settings -->
+        <div class="glass-card p-6">
+             <h2 class="text-lg font-bold text-white mb-4">Admin Settings</h2>
+             <div class="flex gap-4 items-center">
+                 <input type="password" id="new-admin-pass" placeholder="New Password" class="input-field p-2 rounded text-sm">
+                 <button onclick="changeAdminPass()" class="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded text-sm">Change Password</button>
+             </div>
+        </div>
 
         <!-- Generate Key -->
         <div class="glass-card p-6">
@@ -432,6 +453,25 @@ ${commonHead}
     </div>
 
     <script>
+        async function changeAdminPass() {
+            const password = document.getElementById('new-admin-pass').value;
+            if (!password) return alert('Enter a password');
+            if (!confirm('Change admin password?')) return;
+
+            const res = await fetch('/api/admin/password', {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ password })
+            });
+            const data = await res.json();
+            if (data.success) {
+                alert('Password changed');
+                document.getElementById('new-admin-pass').value = '';
+            } else {
+                alert('Error: ' + data.error);
+            }
+        }
+
         async function generateKey() {
             const duration = document.getElementById('duration').value;
             const res = await fetch('/api/admin/keys/generate', {
@@ -504,11 +544,19 @@ ${commonHead}
 
 app.post('/api/admin/login', async (c) => {
     const { password } = await c.req.json()
-    if (password === ADMIN_PASSWORD) {
+    const currentPass = await getAdminPassword(c.env)
+    if (password === currentPass) {
         setCookie(c, 'admin_session', '1', { path: '/', httpOnly: true })
         return c.json({ success: true })
     }
     return c.json({ success: false })
+})
+
+app.put('/api/admin/password', async (c) => {
+    const { password } = await c.req.json()
+    if (!password) return c.json({ success: false, error: 'Password required' })
+    await updateAdminPassword(c.env, password)
+    return c.json({ success: true })
 })
 
 app.post('/api/admin/keys/generate', async (c) => {
