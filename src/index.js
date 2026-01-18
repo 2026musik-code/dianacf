@@ -878,6 +878,16 @@ ${commonHead}
                     <p id="key-status" class="text-xs text-gray-500">Not connected</p>
                 </div>
 
+                <div class="space-y-2">
+                    <label class="block text-xs text-gray-400">Model</label>
+                    <select id="aiModel" class="input-field w-full p-2 rounded text-sm bg-black/50">
+                        <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Exp)</option>
+                        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                        <option value="gemini-pro">Gemini 1.0 Pro</option>
+                    </select>
+                </div>
+
                 <div class="space-y-2 pt-4">
                     <label class="block text-sm text-gray-300">Describe your Worker</label>
                     <textarea id="aiPrompt" class="input-field w-full p-3 rounded-lg text-sm h-32" placeholder="Create a worker that blocks traffic from country code CN..."></textarea>
@@ -943,6 +953,7 @@ ${commonHead}
             if (!apiKey) { alert('Please enter and save your Gemini API Key first.'); return; }
 
             const prompt = document.getElementById('aiPrompt').value;
+            const model = document.getElementById('aiModel').value;
             if (!prompt) { alert('Please describe what you want.'); return; }
 
             const btn = document.getElementById('btn-generate');
@@ -954,7 +965,7 @@ ${commonHead}
                 const res = await fetch('/api/ai/generate', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ prompt, apiKey })
+                    body: JSON.stringify({ prompt, apiKey, model })
                 });
                 const data = await res.json();
 
@@ -1016,12 +1027,13 @@ ${commonHead}
 // 0. AI Generate
 app.post('/api/ai/generate', async (c) => {
     try {
-        const { prompt, apiKey } = await c.req.json();
+        const { prompt, apiKey, model } = await c.req.json();
         if (!prompt || !apiKey) return c.json({ success: false, error: 'Missing prompt or API key' });
 
+        const selectedModel = model || 'gemini-1.5-flash';
         const systemPrompt = "You are an expert Cloudflare Worker developer. Write a complete, ready-to-deploy Cloudflare Worker JavaScript code based on the user's request. Return ONLY the code. Do not include markdown formatting (like ```javascript or ```). Do not include explanations. Ensure the code is a valid Cloudflare Worker module using ES modules syntax (export default { ... }).";
 
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
 
         const response = await fetch(geminiUrl, {
             method: 'POST',
