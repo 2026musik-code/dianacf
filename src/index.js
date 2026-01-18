@@ -284,7 +284,28 @@ ${commonHead}
                 </div>
 
                 <div id="code-section">
-                    <label class="block text-sm text-gray-400 mb-1">JavaScript Code</label>
+                    <div class="flex justify-between items-end mb-1">
+                        <label class="block text-sm text-gray-400">JavaScript Code</label>
+                        <button onclick="toggleAiAssist()" class="text-xs text-purple-300 hover:text-white flex items-center gap-1">
+                            ✨ AI Assist
+                        </button>
+                    </div>
+
+                    <div id="ai-assist-panel" class="hidden mb-4 p-3 bg-white/5 rounded-lg border border-white/10 space-y-3">
+                        <textarea id="aiEditPrompt" class="input-field w-full p-2 rounded text-sm h-20" placeholder="Describe how to change the code (e.g., 'Add basic auth')"></textarea>
+                        <div class="flex gap-2">
+                             <select id="aiEditModel" class="input-field p-2 rounded text-xs bg-black/50 flex-1">
+                                <option value="gemini-3-pro-preview">Gemini 3.0 Pro (Preview)</option>
+                                <option value="gemini-3-flash-preview">Gemini 3.0 Flash (Preview)</option>
+                                <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                                <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                                <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Exp)</option>
+                                <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                            </select>
+                            <button onclick="applyAiEdit()" id="btn-ai-edit" class="bg-purple-600 hover:bg-purple-500 text-white px-4 py-2 rounded text-xs font-bold">Generate & Apply</button>
+                        </div>
+                    </div>
+
                     <textarea id="workerCode" class="input-field w-full p-3 rounded-lg font-mono text-sm h-64" spellcheck="false">
 export default {
   async fetch(request, env, ctx) {
@@ -350,6 +371,54 @@ export default {
             if (type === 'error') p.style.color = '#f87171';
             if (type === 'success') p.style.color = '#4ade80';
             el.prepend(p);
+        }
+
+        function toggleAiAssist() {
+            document.getElementById('ai-assist-panel').classList.toggle('hidden');
+        }
+
+        async function applyAiEdit() {
+            const apiKey = localStorage.getItem('gemini_key');
+            if (!apiKey) {
+                alert('Gemini API Key missing. Please go to "AI Gen" tab to save it.');
+                return;
+            }
+
+            const prompt = document.getElementById('aiEditPrompt').value;
+            const currentCode = document.getElementById('workerCode').value;
+            const model = document.getElementById('aiEditModel').value;
+
+            if (!prompt) { alert('Please enter instructions.'); return; }
+
+            const btn = document.getElementById('btn-ai-edit');
+            const originalText = btn.textContent;
+            btn.textContent = 'Generating...';
+            btn.disabled = true;
+
+            const fullPrompt = 'Current Code:\\n' + currentCode + '\\n\\nInstructions:\\n' + prompt + '\\n\\nPlease provide the updated full code.';
+
+            try {
+                const res = await fetch('/api/ai/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: fullPrompt, apiKey, model })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    document.getElementById('workerCode').value = data.code;
+                    log('AI updated the code successfully.', 'success');
+                    document.getElementById('aiEditPrompt').value = ''; // clear prompt
+                    toggleAiAssist(); // close panel
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('System Error: ' + e.message);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
         }
 
         async function deploy() {
