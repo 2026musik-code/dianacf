@@ -255,9 +255,9 @@ ${commonHead}
                 </h1>
                 <nav class="hidden md:flex space-x-1">
                     <a href="/" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">Deploy</a>
-                    <!-- Will add Workers and DNS here later -->
                     <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
                     <a href="/dns" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">DNS</a>
+                    <a href="/ai" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">AI Gen</a>
                 </nav>
             </div>
             <div class="flex items-center gap-3">
@@ -422,6 +422,7 @@ ${commonHead}
                 <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
                 <a href="/workers" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">Workers</a>
                 <a href="/dns" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">DNS</a>
+                <a href="/ai" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">AI Gen</a>
             </nav>
             <div class="flex items-center gap-3">
                 <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
@@ -628,6 +629,7 @@ ${commonHead}
                 <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
                 <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
                 <a href="/dns" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">DNS</a>
+                <a href="/ai" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">AI Gen</a>
             </nav>
             <div class="flex items-center gap-3">
                 <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
@@ -839,7 +841,215 @@ ${commonHead}
     `)
 })
 
+app.get('/ai', (c) => {
+    return c.html(html`
+<!DOCTYPE html>
+<html lang="en">
+${commonHead}
+<body class="p-4 md:p-8 flex justify-center items-start">
+    <div class="max-w-6xl w-full space-y-6">
+        <header class="flex justify-between items-center glass-card p-4">
+             <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
+                CF Mini
+            </h1>
+            <nav class="hidden md:flex space-x-1">
+                <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
+                <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
+                <a href="/dns" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">DNS</a>
+                <a href="/ai" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">AI Gen</a>
+            </nav>
+            <div class="flex items-center gap-3">
+                <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
+                <a href="/logout" class="text-sm text-red-300 hover:text-red-400">Logout</a>
+            </div>
+        </header>
+
+        <main class="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <!-- Settings & Chat -->
+            <div class="glass-card p-6 space-y-4 md:col-span-1">
+                <h2 class="text-xl font-semibold text-purple-300">AI Assistant</h2>
+
+                <div class="space-y-2">
+                    <label class="block text-xs text-gray-400">Gemini API Key</label>
+                    <div class="flex gap-2">
+                        <input type="password" id="aiKey" class="input-field w-full p-2 rounded text-sm" placeholder="Paste Key Here">
+                        <button onclick="saveKey()" id="btn-save-key" class="bg-white/10 px-3 py-1 rounded text-xs hover:bg-white/20">Save</button>
+                    </div>
+                    <p id="key-status" class="text-xs text-gray-500">Not connected</p>
+                </div>
+
+                <div class="space-y-2 pt-4">
+                    <label class="block text-sm text-gray-300">Describe your Worker</label>
+                    <textarea id="aiPrompt" class="input-field w-full p-3 rounded-lg text-sm h-32" placeholder="Create a worker that blocks traffic from country code CN..."></textarea>
+                    <button onclick="generateCode()" id="btn-generate" class="btn-primary w-full py-2 rounded-lg font-bold text-white shadow-lg text-sm">
+                        Generate Code
+                    </button>
+                </div>
+            </div>
+
+            <!-- Output & Deploy -->
+            <div class="glass-card p-6 space-y-4 md:col-span-2">
+                 <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-semibold text-blue-300">Generated Code</h2>
+                    <div class="flex gap-2">
+                         <input type="text" id="workerName" class="input-field p-1 px-3 rounded text-sm" placeholder="worker-name">
+                         <button onclick="deployAiWorker()" id="btn-deploy" class="bg-green-600/80 hover:bg-green-600 text-white px-4 py-1 rounded text-sm font-bold">Deploy</button>
+                    </div>
+                </div>
+                <textarea id="generatedCode" class="input-field w-full p-4 rounded-lg font-mono text-sm h-[500px]" spellcheck="false">// Code will appear here...</textarea>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        // Key Management
+        window.addEventListener('load', () => {
+            const key = localStorage.getItem('gemini_key');
+            if (key) {
+                document.getElementById('aiKey').value = key;
+                updateKeyStatus(true);
+            }
+        });
+
+        function saveKey() {
+            const key = document.getElementById('aiKey').value;
+            if (key) {
+                localStorage.setItem('gemini_key', key);
+                updateKeyStatus(true);
+            } else {
+                localStorage.removeItem('gemini_key');
+                updateKeyStatus(false);
+            }
+        }
+
+        function updateKeyStatus(connected) {
+            const el = document.getElementById('key-status');
+            const btn = document.getElementById('btn-save-key');
+            if (connected) {
+                el.textContent = 'Connected (Stored locally)';
+                el.classList.add('text-green-400');
+                el.classList.remove('text-gray-500');
+                btn.textContent = 'Update';
+            } else {
+                el.textContent = 'Not connected';
+                el.classList.add('text-gray-500');
+                el.classList.remove('text-green-400');
+                btn.textContent = 'Save';
+            }
+        }
+
+        async function generateCode() {
+            const apiKey = localStorage.getItem('gemini_key');
+            if (!apiKey) { alert('Please enter and save your Gemini API Key first.'); return; }
+
+            const prompt = document.getElementById('aiPrompt').value;
+            if (!prompt) { alert('Please describe what you want.'); return; }
+
+            const btn = document.getElementById('btn-generate');
+            const originalText = btn.textContent;
+            btn.innerHTML = '<div class="loader mx-auto"></div>';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/ai/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt, apiKey })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    document.getElementById('generatedCode').value = data.code;
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('System Error: ' + e.message);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        async function deployAiWorker() {
+            const workerName = document.getElementById('workerName').value;
+            const content = document.getElementById('generatedCode').value;
+
+            if (!workerName) { alert('Please provide a worker name.'); return; }
+            if (!content || content.startsWith('// Code')) { alert('No code to deploy.'); return; }
+
+            const btn = document.getElementById('btn-deploy');
+            const originalText = btn.textContent;
+            btn.textContent = '...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/deploy', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ workerName, mode: 'code', content })
+                });
+
+                if (res.status === 401) { window.location.href = '/login'; return; }
+                const data = await res.json();
+
+                if (data.success) {
+                    alert('Deployment Successful!');
+                } else {
+                    alert('Deploy Failed: ' + data.error);
+                }
+            } catch (e) {
+                alert('Error: ' + e.message);
+            } finally {
+                btn.textContent = originalText;
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
+    `)
+})
+
 // --- API Implementation ---
+
+// 0. AI Generate
+app.post('/api/ai/generate', async (c) => {
+    try {
+        const { prompt, apiKey } = await c.req.json();
+        if (!prompt || !apiKey) return c.json({ success: false, error: 'Missing prompt or API key' });
+
+        const systemPrompt = "You are an expert Cloudflare Worker developer. Write a complete, ready-to-deploy Cloudflare Worker JavaScript code based on the user's request. Return ONLY the code. Do not include markdown formatting (like ```javascript or ```). Do not include explanations. Ensure the code is a valid Cloudflare Worker module using ES modules syntax (export default { ... }).";
+
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+
+        const response = await fetch(geminiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                contents: [{
+                    parts: [{ text: systemPrompt + "\n\nUser Request: " + prompt }]
+                }]
+            })
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+            return c.json({ success: false, error: data.error?.message || 'Gemini API Error' });
+        }
+
+        let generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+        // Cleanup if model ignores instructions and adds markdown
+        generatedText = generatedText.replace(/^```javascript\n/, '').replace(/^```\n/, '').replace(/```$/, '');
+
+        return c.json({ success: true, code: generatedText.trim() });
+
+    } catch (e) {
+        return c.json({ success: false, error: e.message });
+    }
+})
 
 // 1. Deploy (Updated to use Context)
 app.post('/api/deploy', async (c) => {
