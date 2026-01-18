@@ -25,6 +25,7 @@
     "hono": "^4.11.4"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "wrangler": "^4.59.2"
   }
 }
