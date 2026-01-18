@@ -1,5 +1,5 @@
-import { Hono } from 'https://esm.sh/hono@4.1.0'
-import { html } from 'https://esm.sh/hono@4.1.0/html'
+import { Hono } from 'hono'
+import { html } from 'hono/html'
 
 const app = new Hono()
 
