@@ -440,6 +440,8 @@ ${commonHead}
         </div>
     </div>
     <script>
+        let currentWorkerId = null;
+
         async function loadWorkers() {
             const list = document.getElementById('worker-list');
             list.innerHTML = '<div class="loader mx-auto"></div>';
@@ -461,6 +463,7 @@ ${commonHead}
                                 <p class="text-xs text-gray-400">\${w.modified_on}</p>
                             </div>
                             <div class="flex gap-2">
+                                <button onclick="manageDomains('\${w.id}')" class="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded hover:bg-green-500/30">Domains</button>
                                 <button onclick="editWorker('\${w.id}')" class="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded hover:bg-blue-500/30">Edit</button>
                                 <button onclick="deleteWorker('\${w.id}')" class="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded hover:bg-red-500/30">Delete</button>
                             </div>
@@ -503,8 +506,108 @@ ${commonHead}
             }
         }
 
+        async function manageDomains(workerId) {
+            currentWorkerId = workerId;
+            document.getElementById('domain-modal').classList.remove('hidden');
+            document.querySelector('#domain-modal h3').textContent = 'Domains for ' + workerId;
+            loadWorkerDomains();
+        }
+
+        function closeDomainModal() {
+             document.getElementById('domain-modal').classList.add('hidden');
+        }
+
+        async function loadWorkerDomains() {
+            const list = document.getElementById('domain-list');
+            list.innerHTML = '<div class="loader mx-auto"></div>';
+            try {
+                const res = await fetch('/api/workers/' + currentWorkerId + '/domains');
+                const data = await res.json();
+                if (data.success) {
+                     if (data.result.length === 0) {
+                        list.innerHTML = '<p class="text-gray-500 text-center text-sm">No custom domains.</p>';
+                        return;
+                    }
+                    list.innerHTML = data.result.map(d => \`
+                        <div class="flex justify-between items-center bg-black/20 p-2 rounded border border-white/5 mb-2">
+                            <span class="text-sm text-white">\${d.hostname}</span>
+                            <button onclick="deleteWorkerDomain('\${d.id}')" class="text-xs text-red-300 hover:text-white">Del</button>
+                        </div>
+                    \`).join('');
+                } else {
+                    list.innerHTML = '<p class="text-red-400">Failed.</p>';
+                }
+            } catch(e) {
+                list.innerHTML = '<p class="text-red-400">Error.</p>';
+            }
+        }
+
+        async function addWorkerDomain() {
+            const hostname = document.getElementById('new-domain').value;
+            if(!hostname) return;
+
+            const btn = document.getElementById('add-domain-btn');
+            btn.textContent = '...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/workers/' + currentWorkerId + '/domains', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ hostname })
+                });
+                const data = await res.json();
+                if(data.success) {
+                    document.getElementById('new-domain').value = '';
+                    loadWorkerDomains();
+                } else {
+                    alert('Failed: ' + (data.errors?.[0]?.message || 'Unknown'));
+                }
+            } catch(e) {
+                alert('Error: ' + e.message);
+            } finally {
+                btn.textContent = 'Add';
+                btn.disabled = false;
+            }
+        }
+
+        async function deleteWorkerDomain(domainId) {
+            if(!confirm('Detach domain?')) return;
+             try {
+                const res = await fetch('/api/workers/domains/' + domainId, { method: 'DELETE' });
+                const data = await res.json();
+                if(data.success) {
+                    loadWorkerDomains();
+                } else {
+                    alert('Failed: ' + (data.errors?.[0]?.message || 'Unknown'));
+                }
+            } catch(e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
         loadWorkers();
     </script>
+
+    <!-- Domain Modal -->
+    <div id="domain-modal" class="fixed inset-0 bg-black/80 hidden flex justify-center items-center p-4 z-50">
+        <div class="glass-card p-6 w-full max-w-md space-y-4 bg-[#1a202c]">
+            <h3 class="text-lg font-bold text-white">Manage Domains</h3>
+
+            <div class="flex gap-2">
+                <input id="new-domain" placeholder="sub.example.com" class="input-field w-full p-2 rounded text-sm">
+                <button id="add-domain-btn" onclick="addWorkerDomain()" class="px-4 py-2 bg-green-600 rounded text-white text-sm">Add</button>
+            </div>
+
+            <div id="domain-list" class="max-h-60 overflow-y-auto space-y-2">
+                <!-- Domains -->
+            </div>
+
+            <div class="flex justify-end pt-2">
+                <button onclick="closeDomainModal()" class="px-4 py-2 text-gray-300 hover:text-white">Close</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>
     `)
@@ -850,6 +953,43 @@ app.get('/api/workers/:id/content', async (c) => {
     });
     const content = await res.text();
     return c.text(content);
+})
+
+app.get('/api/workers/:id/domains', async (c) => {
+    const accountId = c.get('accountId');
+    const apiToken = c.get('apiToken');
+    const id = c.req.param('id'); // This is the worker name
+    // Fetch all domains and filter by service (worker name)
+    // Cloudflare API allows filtering by service
+    const data = await cfRequest(`/accounts/${accountId}/workers/domains?service=${id}`, 'GET', apiToken);
+    return c.json(data);
+})
+
+app.post('/api/workers/:id/domains', async (c) => {
+    const accountId = c.get('accountId');
+    const apiToken = c.get('apiToken');
+    const id = c.req.param('id'); // worker name
+    const { hostname } = await c.req.json();
+
+    const body = {
+        environment: 'production',
+        hostname: hostname,
+        service: id,
+        zone_id: '' // Optional, can be inferred or passed if needed. Usually just hostname/service is enough for CF to auto-detect zone.
+    };
+
+    // If zone_id is required by some strict API versions, we might need to lookup zone for hostname.
+    // However, usually 'hostname' + 'service' is sufficient.
+    const data = await cfRequest(`/accounts/${accountId}/workers/domains`, 'PUT', apiToken, body);
+    return c.json(data);
+})
+
+app.delete('/api/workers/domains/:domainId', async (c) => {
+    const accountId = c.get('accountId');
+    const apiToken = c.get('apiToken');
+    const domainId = c.req.param('domainId');
+    const data = await cfRequest(`/accounts/${accountId}/workers/domains/${domainId}`, 'DELETE', apiToken);
+    return c.json(data);
 })
 
 app.put('/api/zones/:zoneId/dns/:recordId', async (c) => {
