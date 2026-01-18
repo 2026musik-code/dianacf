@@ -17,6 +17,7 @@ const authMiddleware = async (c, next) => {
   const apiToken = getCookie(c, 'cf_api_token')
 
   if (!accountId || !apiToken) {
+    if (c.req.path.startsWith('/api/')) return c.json({ error: 'Unauthorized' }, 401)
     return c.redirect('/login')
   }
 
@@ -282,7 +283,7 @@ app.get('/api/me', async (c) => {
     const expiry = keyData.started_at + (keyData.duration * 3600 * 1000);
     const remaining = Math.max(0, expiry - Date.now());
 
-    return c.json({ remaining });
+    return c.json({ remaining, total: keyData.duration * 3600 * 1000 });
 })
 
 app.use('/api/admin/*', adminMiddleware)
@@ -296,8 +297,6 @@ app.post('/api/login', async (c) => {
         return c.json({ success: false, error: 'Missing credentials' })
     }
 
-    // Check Access Key if provided (or strictly require it? user said "key di masukin saat pungunjung")
-    // Assuming strict requirement if keys exist in system, but for now let's make it strict.
     if (!accessKey) {
          return c.json({ success: false, error: 'Access Key is required' })
     }
@@ -553,46 +552,75 @@ ${commonHead}
                 </nav>
             </div>
             <div class="flex items-center gap-3">
-                <div id="session-timer" class="text-xs font-mono text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded hidden">
-                    Time: <span id="time-remaining">--:--</span>
-                </div>
                 <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
                 <a href="/logout" class="text-sm text-red-300 hover:text-red-400">Logout</a>
             </div>
-            <script>
-                 // Check session duration
-                 async function checkSession() {
-                    const accessKey = getCookie('access_key'); // Helper needed or fetch status
-                    // Since we can't easily read HTTPOnly cookies in JS, we should fetch status from an API or render it
-                    // For this simple version, we'll assume the user is valid if they loaded the page.
-                    // But we want to show the timer. Let's verify key status via a new endpoint or inferred.
-                    // Actually, let's just make a small endpoint to get my session info.
-                 }
+        </header>
 
-                 // Simpler: Fetch user info endpoint
-                 (async () => {
+        <!-- Progress Bar -->
+        <div id="progress-container" class="fixed bottom-0 left-0 w-full h-2 bg-gray-800 hidden z-50">
+            <div id="progress-bar" class="h-full bg-blue-500 transition-all duration-1000 ease-linear" style="width: 100%;"></div>
+        </div>
+
+        <script>
+             (async () => {
+                 const progressBar = document.getElementById('progress-bar');
+                 const progressContainer = document.getElementById('progress-container');
+
+                 let localRemaining = 0;
+                 let totalDuration = 0;
+
+                 async function syncSession() {
                      try {
                         const res = await fetch('/api/me');
                         const data = await res.json();
-                        if (data.remaining) {
-                             document.getElementById('session-timer').classList.remove('hidden');
-                             let seconds = Math.floor(data.remaining / 1000);
 
-                             setInterval(() => {
-                                 if (seconds <= 0) {
-                                     window.location.reload();
-                                     return;
-                                 }
-                                 seconds--;
-                                 const h = Math.floor(seconds / 3600);
-                                 const m = Math.floor((seconds % 3600) / 60);
-                                 document.getElementById('time-remaining').textContent = h + 'h ' + m + 'm';
-                             }, 1000);
+                        // If remaining is 0 or undefined, session is invalid/expired
+                        if (!data.remaining || data.remaining <= 0) {
+                             window.location.href = '/logout';
+                             return;
                         }
-                     } catch(e) {}
-                 })();
-            </script>
-        </header>
+
+                        localRemaining = data.remaining;
+                        totalDuration = data.total;
+                        progressContainer.classList.remove('hidden');
+                        updateBar();
+
+                     } catch(e) {
+                         // On network error we might want to retry or ignore,
+                         // but if 401/403 it would be caught above usually if api returns status
+                     }
+                 }
+
+                 function updateBar() {
+                     if (totalDuration > 0) {
+                         const pct = Math.max(0, (localRemaining / totalDuration) * 100);
+                         progressBar.style.width = pct + '%';
+
+                         // Change color based on urgency
+                         if (pct < 10) progressBar.classList.replace('bg-blue-500', 'bg-red-500');
+                         else if (pct < 30) progressBar.classList.replace('bg-blue-500', 'bg-yellow-500');
+                     }
+                 }
+
+                 // Initial sync
+                 await syncSession();
+
+                 // Poll every 5 seconds to check revocation
+                 setInterval(syncSession, 5000);
+
+                 // Local countdown for smooth animation between polls
+                 setInterval(() => {
+                     if (localRemaining > 0) {
+                         localRemaining -= 1000;
+                         updateBar();
+                     } else if (totalDuration > 0) {
+                         // If we hit 0 locally, force a sync (which will likely logout)
+                         syncSession();
+                     }
+                 }, 1000);
+             })();
+        </script>
 
         <!-- Main Content -->
         <main id="main-content">
@@ -1440,7 +1468,7 @@ app.post('/api/ai/generate', async (c) => {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 contents: [{
-                    parts: [{ text: systemPrompt + "\n\nUser Request: " + prompt }]
+                    parts: [{ text: systemPrompt + "\\n\\nUser Request: " + prompt }]
                 }]
             })
         });
@@ -1454,7 +1482,7 @@ app.post('/api/ai/generate', async (c) => {
         let generatedText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
         // Cleanup if model ignores instructions and adds markdown
-        generatedText = generatedText.replace(/^```javascript\n/, '').replace(/^```\n/, '').replace(/```$/, '');
+        generatedText = generatedText.replace(/^```javascript\\n/, '').replace(/^```\\n/, '').replace(/```$/, '');
 
         return c.json({ success: true, code: generatedText.trim() });
 
