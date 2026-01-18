@@ -7,13 +7,16 @@ const app = new Hono()
 // --- Middleware ---
 
 const authMiddleware = async (c, next) => {
+  // Skip auth for login, public assets, and admin routes
+  if (c.req.path === '/login' || c.req.path === '/api/login' || c.req.path.startsWith('/admin') || c.req.path.startsWith('/api/admin')) {
+    await next()
+    return
+  }
+
   const accountId = getCookie(c, 'cf_account_id')
   const apiToken = getCookie(c, 'cf_api_token')
 
   if (!accountId || !apiToken) {
-    if (c.req.path.startsWith('/api/') && c.req.path !== '/api/login') {
-        return c.json({ error: 'Unauthorized' }, 401)
-    }
     return c.redirect('/login')
   }
 
@@ -23,7 +26,22 @@ const authMiddleware = async (c, next) => {
   await next()
 }
 
+const adminMiddleware = async (c, next) => {
+  const adminSession = getCookie(c, 'admin_session')
+  if (c.req.path === '/admin' || c.req.path === '/api/admin/login') {
+    await next()
+    return
+  }
+  if (!adminSession) {
+     if (c.req.path.startsWith('/api/')) return c.json({ error: 'Unauthorized' }, 401)
+     return c.redirect('/admin')
+  }
+  await next()
+}
+
 // --- Helpers ---
+
+const ADMIN_PASSWORD = 'admin' // Default password
 
 async function verifyToken(apiToken) {
     try {
@@ -38,6 +56,44 @@ async function verifyToken(apiToken) {
     } catch (e) {
         return false
     }
+}
+
+// KV Helpers
+async function getKeys(env) {
+    const list = await env.MINI_KV.list()
+    const keys = []
+    for (const k of list.keys) {
+        const val = await env.MINI_KV.get(k.name, { type: 'json' })
+        if (val) keys.push(val)
+    }
+    return keys
+}
+
+async function getKey(env, key) {
+    return await env.MINI_KV.get('key:' + key, { type: 'json' })
+}
+
+async function createKey(env, durationHours) {
+    const key = Math.random().toString(36).substring(2, 8).toUpperCase()
+    const data = {
+        key,
+        duration: durationHours,
+        created_at: Date.now(),
+        started_at: null,
+        user_agent: null,
+        ip: null,
+        status: 'unused'
+    }
+    await env.MINI_KV.put('key:' + key, JSON.stringify(data))
+    return data
+}
+
+async function deleteKey(env, key) {
+    await env.MINI_KV.delete('key:' + key)
+}
+
+async function updateKey(env, key, data) {
+    await env.MINI_KV.put('key:' + key, JSON.stringify(data))
 }
 
 async function cfRequest(endpoint, method, apiToken, body = null) {
@@ -155,6 +211,11 @@ ${commonHead}
 
         <form id="loginForm" class="space-y-4">
             <div>
+                <label class="block text-sm text-gray-400 mb-1">Access Key (Optional)</label>
+                <input type="text" id="accessKey" class="input-field w-full p-3 rounded-lg" placeholder="Enter Access Key from Admin">
+            </div>
+            <div class="border-t border-white/10 my-4"></div>
+            <div>
                 <label class="block text-sm text-gray-400 mb-1">Account ID</label>
                 <input type="text" id="accountId" class="input-field w-full p-3 rounded-lg" placeholder="Account ID" required>
             </div>
@@ -174,6 +235,7 @@ ${commonHead}
             e.preventDefault();
             const accountId = document.getElementById('accountId').value;
             const apiToken = document.getElementById('apiToken').value;
+            const accessKey = document.getElementById('accessKey').value;
             const btn = document.getElementById('loginBtn');
             const errorMsg = document.getElementById('error-msg');
 
@@ -185,7 +247,7 @@ ${commonHead}
                 const res = await fetch('/api/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ accountId, apiToken })
+                    body: JSON.stringify({ accountId, apiToken, accessKey })
                 });
                 const data = await res.json();
 
@@ -210,13 +272,56 @@ ${commonHead}
 
 // --- Routes ---
 
+app.get('/api/me', async (c) => {
+    const accessKey = getCookie(c, 'access_key');
+    if (!accessKey) return c.json({ remaining: null });
+
+    const keyData = await getKey(c.env, accessKey);
+    if (!keyData || keyData.status !== 'active') return c.json({ remaining: 0 });
+
+    const expiry = keyData.started_at + (keyData.duration * 3600 * 1000);
+    const remaining = Math.max(0, expiry - Date.now());
+
+    return c.json({ remaining });
+})
+
+app.use('/api/admin/*', adminMiddleware)
+
 app.get('/login', (c) => c.html(loginPage))
 
 app.post('/api/login', async (c) => {
-    const { accountId, apiToken } = await c.req.json()
+    const { accountId, apiToken, accessKey } = await c.req.json()
 
     if (!accountId || !apiToken) {
         return c.json({ success: false, error: 'Missing credentials' })
+    }
+
+    // Check Access Key if provided (or strictly require it? user said "key di masukin saat pungunjung")
+    // Assuming strict requirement if keys exist in system, but for now let's make it strict.
+    if (!accessKey) {
+         return c.json({ success: false, error: 'Access Key is required' })
+    }
+
+    const keyData = await getKey(c.env, accessKey)
+    if (!keyData) {
+        return c.json({ success: false, error: 'Invalid Access Key' })
+    }
+
+    const now = Date.now();
+
+    // Check if new
+    if (keyData.status === 'unused') {
+        keyData.status = 'active';
+        keyData.started_at = now;
+        keyData.user_agent = c.req.header('User-Agent');
+        keyData.ip = c.req.header('CF-Connecting-IP') || '127.0.0.1';
+        await updateKey(c.env, accessKey, keyData);
+    }
+
+    // Check expiration
+    const expiry = keyData.started_at + (keyData.duration * 3600 * 1000);
+    if (now > expiry) {
+        return c.json({ success: false, error: 'Access Key Expired' })
     }
 
     // Verify token
@@ -227,6 +332,7 @@ app.post('/api/login', async (c) => {
 
     setCookie(c, 'cf_account_id', accountId, { httpOnly: true, secure: true, path: '/', maxAge: 86400 * 7 })
     setCookie(c, 'cf_api_token', apiToken, { httpOnly: true, secure: true, path: '/', maxAge: 86400 * 7 })
+    setCookie(c, 'access_key', accessKey, { httpOnly: true, secure: true, path: '/', maxAge: 86400 * 7 })
 
     return c.json({ success: true })
 })
@@ -234,10 +340,196 @@ app.post('/api/login', async (c) => {
 app.get('/logout', (c) => {
     deleteCookie(c, 'cf_account_id')
     deleteCookie(c, 'cf_api_token')
+    deleteCookie(c, 'access_key')
     return c.redirect('/login')
 })
 
-// Protected Routes
+// --- Admin Routes ---
+
+app.get('/admin', (c) => {
+    const session = getCookie(c, 'admin_session')
+
+    if (!session) {
+        return c.html(html`
+<!DOCTYPE html>
+<html lang="en">
+${commonHead}
+<body class="flex justify-center items-center h-screen">
+    <div class="glass-card p-8 w-full max-w-sm space-y-6">
+        <h1 class="text-2xl font-bold text-center text-white">Admin Login</h1>
+        <form id="adminForm" class="space-y-4">
+            <input type="password" id="password" class="input-field w-full p-3 rounded-lg" placeholder="Password" required>
+            <button type="submit" class="btn-primary w-full py-3 rounded-lg font-bold text-white">Login</button>
+        </form>
+    </div>
+    <script>
+        document.getElementById('adminForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const password = document.getElementById('password').value;
+            const res = await fetch('/api/admin/login', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ password })
+            });
+            const data = await res.json();
+            if(data.success) window.location.reload();
+            else alert('Invalid password');
+        });
+    </script>
+</body>
+</html>
+        `)
+    }
+
+    return c.html(html`
+<!DOCTYPE html>
+<html lang="en">
+${commonHead}
+<body class="p-8">
+    <div class="max-w-4xl mx-auto space-y-6">
+        <header class="flex justify-between items-center glass-card p-4">
+            <h1 class="text-2xl font-bold text-pink-500">Admin Dashboard</h1>
+            <button onclick="document.cookie='admin_session=; path=/; max-age=0'; location.reload()" class="text-red-400 text-sm">Logout</button>
+        </header>
+
+        <!-- Generate Key -->
+        <div class="glass-card p-6">
+            <h2 class="text-lg font-bold text-white mb-4">Generate Access Key</h2>
+            <div class="flex gap-4">
+                <select id="duration" class="input-field p-2 rounded">
+                    <option value="1">1 Hour</option>
+                    <option value="6">6 Hours</option>
+                    <option value="12">12 Hours</option>
+                    <option value="24">24 Hours</option>
+                </select>
+                <button onclick="generateKey()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded">Generate</button>
+            </div>
+            <div id="new-key-display" class="mt-4 hidden p-4 bg-green-500/20 text-green-300 rounded text-center text-xl font-mono"></div>
+        </div>
+
+        <!-- Active Keys -->
+        <div class="glass-card p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-lg font-bold text-white">Active Keys</h2>
+                <button onclick="loadKeys()" class="text-xs bg-white/10 px-2 py-1 rounded">Refresh</button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left text-gray-400">
+                    <thead class="text-xs text-gray-200 uppercase bg-white/5">
+                        <tr>
+                            <th class="px-4 py-2">Key</th>
+                            <th class="px-4 py-2">Duration</th>
+                            <th class="px-4 py-2">Status</th>
+                            <th class="px-4 py-2">Started</th>
+                            <th class="px-4 py-2">IP / UA</th>
+                            <th class="px-4 py-2">Remaining</th>
+                            <th class="px-4 py-2">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="key-table-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function generateKey() {
+            const duration = document.getElementById('duration').value;
+            const res = await fetch('/api/admin/keys/generate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ duration: parseInt(duration) })
+            });
+            const data = await res.json();
+            if(data.success) {
+                const display = document.getElementById('new-key-display');
+                display.textContent = data.key;
+                display.classList.remove('hidden');
+                loadKeys();
+            }
+        }
+
+        async function loadKeys() {
+            const res = await fetch('/api/admin/keys');
+            const data = await res.json();
+            const tbody = document.getElementById('key-table-body');
+            tbody.innerHTML = '';
+
+            data.keys.forEach(k => {
+                let remaining = '-';
+                if (k.status === 'active' && k.started_at) {
+                    const expiry = k.started_at + (k.duration * 3600 * 1000);
+                    const diff = expiry - Date.now();
+                    if (diff > 0) {
+                        const h = Math.floor(diff / 3600000);
+                        const m = Math.floor((diff % 3600000) / 60000);
+                        remaining = h + 'h ' + m + 'm';
+                    } else {
+                        remaining = 'Expired';
+                    }
+                }
+
+                const tr = document.createElement('tr');
+                tr.className = 'border-b border-white/5 hover:bg-white/5';
+                tr.innerHTML = \`
+                    <td class="px-4 py-3 font-mono text-white">\${k.key}</td>
+                    <td class="px-4 py-3">\${k.duration}h</td>
+                    <td class="px-4 py-3 \${k.status === 'active' ? 'text-green-400' : 'text-yellow-400'}">\${k.status}</td>
+                    <td class="px-4 py-3">\${k.started_at ? new Date(k.started_at).toLocaleTimeString() : '-'}</td>
+                    <td class="px-4 py-3 truncate max-w-xs" title="\${k.user_agent}">
+                        \${k.ip || '-'}<br>
+                        <span class="text-xs text-gray-500">\${(k.user_agent || '').substring(0, 20)}...</span>
+                    </td>
+                    <td class="px-4 py-3 font-bold">\${remaining}</td>
+                    <td class="px-4 py-3">
+                        <button onclick="deleteKey('\${k.key}')" class="text-red-400 hover:text-red-300">Delete</button>
+                    </td>
+                \`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function deleteKey(key) {
+            if(!confirm('Delete key?')) return;
+            await fetch('/api/admin/keys/' + key, { method: 'DELETE' });
+            loadKeys();
+        }
+
+        loadKeys();
+        setInterval(loadKeys, 10000);
+    </script>
+</body>
+</html>
+    `)
+})
+
+app.post('/api/admin/login', async (c) => {
+    const { password } = await c.req.json()
+    if (password === ADMIN_PASSWORD) {
+        setCookie(c, 'admin_session', '1', { path: '/', httpOnly: true })
+        return c.json({ success: true })
+    }
+    return c.json({ success: false })
+})
+
+app.post('/api/admin/keys/generate', async (c) => {
+    const { duration } = await c.req.json()
+    const data = await createKey(c.env, duration)
+    return c.json({ success: true, key: data.key })
+})
+
+app.get('/api/admin/keys', async (c) => {
+    const keys = await getKeys(c.env)
+    return c.json({ keys })
+})
+
+app.delete('/api/admin/keys/:key', async (c) => {
+    const key = c.req.param('key')
+    await deleteKey(c.env, key)
+    return c.json({ success: true })
+})
+
+// Protected Routes (Normal User)
 app.use('/*', authMiddleware)
 
 app.get('/', (c) => {
@@ -261,9 +553,45 @@ ${commonHead}
                 </nav>
             </div>
             <div class="flex items-center gap-3">
+                <div id="session-timer" class="text-xs font-mono text-yellow-400 bg-yellow-400/10 px-2 py-1 rounded hidden">
+                    Time: <span id="time-remaining">--:--</span>
+                </div>
                 <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
                 <a href="/logout" class="text-sm text-red-300 hover:text-red-400">Logout</a>
             </div>
+            <script>
+                 // Check session duration
+                 async function checkSession() {
+                    const accessKey = getCookie('access_key'); // Helper needed or fetch status
+                    // Since we can't easily read HTTPOnly cookies in JS, we should fetch status from an API or render it
+                    // For this simple version, we'll assume the user is valid if they loaded the page.
+                    // But we want to show the timer. Let's verify key status via a new endpoint or inferred.
+                    // Actually, let's just make a small endpoint to get my session info.
+                 }
+
+                 // Simpler: Fetch user info endpoint
+                 (async () => {
+                     try {
+                        const res = await fetch('/api/me');
+                        const data = await res.json();
+                        if (data.remaining) {
+                             document.getElementById('session-timer').classList.remove('hidden');
+                             let seconds = Math.floor(data.remaining / 1000);
+
+                             setInterval(() => {
+                                 if (seconds <= 0) {
+                                     window.location.reload();
+                                     return;
+                                 }
+                                 seconds--;
+                                 const h = Math.floor(seconds / 3600);
+                                 const m = Math.floor((seconds % 3600) / 60);
+                                 document.getElementById('time-remaining').textContent = h + 'h ' + m + 'm';
+                             }, 1000);
+                        }
+                     } catch(e) {}
+                 })();
+            </script>
         </header>
 
         <!-- Main Content -->
