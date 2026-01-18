@@ -23,5 +23,8 @@
   "homepage": "https://github.com/2026musik-code/dianacf#readme",
   "dependencies": {
     "hono": "^4.11.4"
+  },
+  "devDependencies": {
+    "wrangler": "^4.59.2"
   }
 }
