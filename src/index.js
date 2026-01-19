@@ -309,10 +309,6 @@ app.post('/api/login', async (c) => {
         return c.json({ success: false, error: 'Missing credentials' })
     }
 
-    // Check Access Key if provided or mandated
-    // For this combined version, we'll allow standard login if no key system is enforced,
-    // BUT the prompt implies we want the key system.
-    // If accessKey is present, validate it.
     if (accessKey) {
         const keyData = await getKey(c.env, accessKey)
         if (!keyData) {
@@ -320,7 +316,6 @@ app.post('/api/login', async (c) => {
         }
 
         const now = Date.now();
-        // Check if new
         if (keyData.status === 'unused') {
             keyData.status = 'active';
             keyData.started_at = now;
@@ -328,19 +323,13 @@ app.post('/api/login', async (c) => {
             keyData.ip = c.req.header('CF-Connecting-IP') || '127.0.0.1';
             await updateKey(c.env, accessKey, keyData);
         }
-        // Check expiration
         const expiry = keyData.started_at + (keyData.duration * 3600 * 1000);
         if (now > expiry) {
             return c.json({ success: false, error: 'Access Key Expired' })
         }
         setCookie(c, 'access_key', accessKey, { httpOnly: true, secure: true, path: '/', maxAge: 86400 * 7 })
-    } else {
-        // If no access key provided, maybe we just proceed?
-        // Or should we enforce it? The previous file had it optional.
-        // I will keep it optional for now to not break "standard" login if they don't have a key.
     }
 
-    // Verify token
     const isValid = await verifyToken(apiToken)
     if (!isValid) {
         return c.json({ success: false, error: 'Invalid API Token' })
@@ -614,7 +603,7 @@ ${commonHead}
             </div>
         </header>
 
-        <!-- Progress Bar (for Key Expiry) -->
+        <!-- Progress Bar -->
         <div id="progress-container" class="fixed bottom-0 left-0 w-full h-2 bg-gray-800 hidden z-50">
             <div id="progress-bar" class="h-full bg-blue-500 transition-all duration-1000 ease-linear" style="width: 100%;"></div>
         </div>
@@ -632,10 +621,8 @@ ${commonHead}
                         const res = await fetch('/api/me');
                         const data = await res.json();
 
-                        // If remaining is null, it means no key is used (standard login), so hide bar
                         if (data.remaining === null) return;
 
-                        // If remaining is 0, session expired
                         if (data.remaining <= 0) {
                              window.location.href = '/logout';
                              return;
@@ -697,7 +684,7 @@ ${commonHead}
                     </div>
 
                     <div id="ai-assist-panel" class="hidden mb-4 p-3 bg-white/5 rounded-lg border border-white/10 space-y-3">
-                        <textarea id="aiEditPrompt" class="input-field w-full p-2 rounded text-sm h-20" placeholder="Describe how to change the code (e.g., 'Add basic auth')"></textarea>
+                        <textarea id="aiEditPrompt" class="input-field w-full p-2 rounded text-sm h-20" placeholder="Describe how to change the code (e.g., 'Add basic auth and OPENAI_KEY env var')"></textarea>
                         <div class="flex gap-2">
                              <select id="aiEditModel" class="input-field p-2 rounded text-xs bg-black/50 flex-1">
                                 <option value="gemini-3-pro-preview">Gemini 3.0 Pro (Preview)</option>
@@ -717,6 +704,29 @@ export default {
     return new Response('Hello World!');
   },
 };</textarea>
+
+                    <!-- Environment Variables Section -->
+                    <div class="mt-4">
+                        <div class="flex justify-between items-center mb-2">
+                            <label class="text-sm text-gray-400">Environment Variables</label>
+                            <button onclick="addEnvVar()" class="text-xs bg-green-500/20 text-green-300 px-2 py-1 rounded hover:bg-green-500/30">+ Add Variable</button>
+                        </div>
+                        <div class="overflow-hidden rounded-lg border border-white/10">
+                            <table class="w-full text-sm">
+                                <thead class="bg-white/5">
+                                    <tr>
+                                        <th class="p-2 text-left text-xs font-medium text-gray-300">Key</th>
+                                        <th class="p-2 text-left text-xs font-medium text-gray-300">Value</th>
+                                        <th class="p-2 w-10"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="env-vars-body">
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="text-xs text-gray-500 mt-1 italic">Secrets are not supported yet, only plain text.</p>
+                    </div>
+
                 </div>
 
                 <div id="github-section" class="hidden">
@@ -778,6 +788,34 @@ export default {
             el.prepend(p);
         }
 
+        // --- Env Vars Logic ---
+        function addEnvVar(key = '', value = '') {
+            const tbody = document.getElementById('env-vars-body');
+            const row = document.createElement('tr');
+            row.className = 'border-t border-white/5';
+            row.innerHTML = \`
+                <td class="p-1"><input value="\${key}" placeholder="KEY" class="w-full bg-transparent p-1 text-white focus:outline-none"></td>
+                <td class="p-1"><input value="\${value}" placeholder="VALUE" class="w-full bg-transparent p-1 text-white focus:outline-none"></td>
+                <td class="p-1 text-center">
+                    <button onclick="this.closest('tr').remove()" class="text-red-400 hover:text-red-300 font-bold">&times;</button>
+                </td>
+            \`;
+            tbody.appendChild(row);
+        }
+
+        function getEnvVars() {
+            const vars = {};
+            const rows = document.querySelectorAll('#env-vars-body tr');
+            rows.forEach(row => {
+                const inputs = row.querySelectorAll('input');
+                const key = inputs[0].value.trim();
+                const value = inputs[1].value; // allow empty values
+                if (key) vars[key] = value;
+            });
+            return vars;
+        }
+        // ----------------------
+
         function toggleAiAssist() {
             document.getElementById('ai-assist-panel').classList.toggle('hidden');
         }
@@ -800,7 +838,22 @@ export default {
             btn.textContent = 'Generating...';
             btn.disabled = true;
 
-            const fullPrompt = 'Current Code:\\n' + currentCode + '\\n\\nInstructions:\\n' + prompt + '\\n\\nPlease provide the updated full code.';
+            // Updated Prompt to request JSON
+            const fullPrompt = \`
+Current Code:
+\${currentCode}
+
+Instructions:
+\${prompt}
+
+Please provide the updated code and any new environment variables needed.
+Return ONLY a valid JSON object with this format (no markdown):
+{
+  "code": "full updated javascript code",
+  "vars": { "KEY": "VALUE" }
+}
+If no vars are needed, return "vars": {}.
+\`;
 
             try {
                 const res = await fetch('/api/ai/generate', {
@@ -811,10 +864,31 @@ export default {
                 const data = await res.json();
 
                 if (data.success) {
-                    document.getElementById('workerCode').value = data.code;
-                    log('AI updated the code successfully.', 'success');
-                    document.getElementById('aiEditPrompt').value = ''; // clear prompt
-                    toggleAiAssist(); // close panel
+                    try {
+                        let jsonStr = data.code.trim();
+                        // Clean markdown if AI ignored "no markdown"
+                        if (jsonStr.startsWith('\`\`\`json')) jsonStr = jsonStr.replace(/\`\`\`json/g, '').replace(/\`\`\`/g, '');
+                        else if (jsonStr.startsWith('\`\`\`')) jsonStr = jsonStr.replace(/\`\`\`/g, '');
+
+                        const aiData = JSON.parse(jsonStr);
+
+                        document.getElementById('workerCode').value = aiData.code;
+
+                        // Populate Env Vars
+                        if (aiData.vars) {
+                            for (const [k, v] of Object.entries(aiData.vars)) {
+                                addEnvVar(k, v);
+                            }
+                        }
+
+                        log('AI updated code & vars successfully.', 'success');
+                        document.getElementById('aiEditPrompt').value = '';
+                        toggleAiAssist();
+                    } catch(e) {
+                         // Fallback for older format if JSON parse fails
+                         log('AI returned unstructured text. Please manually verify.', 'warning');
+                         document.getElementById('workerCode').value = data.code;
+                    }
                 } else {
                     alert('Error: ' + data.error);
                 }
@@ -850,6 +924,7 @@ export default {
 
                     if (mode === 'code') {
                         payload.content = document.getElementById('workerCode').value;
+                        payload.envVars = getEnvVars(); // Send Vars
                     } else {
                         payload.content = document.getElementById('githubUrl').value;
                     }
@@ -870,19 +945,23 @@ export default {
 
                     if (data.success) {
                         log('Deployment successful!', 'success');
-                        break; // Success, exit loop
+                        break;
                     } else {
                         log('Deploy Failed: ' + (data.error || 'Unknown error'), 'error');
 
-                        // Auto-Fix Logic
                         if (apiKey && mode === 'code' && attempt < maxAttempts) {
                             log('🤖 AI Auto-Fixing code...', 'warning');
-                            const fixedCode = await autoFixCode(payload.content, data.error, apiKey);
-                            if (fixedCode) {
-                                document.getElementById('workerCode').value = fixedCode;
+                            const fixedData = await autoFixCode(payload.content, data.error, apiKey);
+                            if (fixedData && fixedData.code) {
+                                document.getElementById('workerCode').value = fixedData.code;
+                                if (fixedData.vars) {
+                                    for (const [k, v] of Object.entries(fixedData.vars)) {
+                                        addEnvVar(k, v);
+                                    }
+                                }
                                 log('Code patched by AI. Retrying...', 'info');
-                                await new Promise(r => setTimeout(r, 1000)); // wait 1s
-                                continue; // Retry loop with new code
+                                await new Promise(r => setTimeout(r, 1000));
+                                continue;
                             } else {
                                 log('AI could not fix the code.', 'error');
                                 break;
@@ -905,7 +984,20 @@ export default {
         async function autoFixCode(code, errorMsg, apiKey) {
             try {
                 const model = document.getElementById('aiEditModel') ? document.getElementById('aiEditModel').value : 'gemini-1.5-flash';
-                const prompt = 'The following Cloudflare Worker code failed to deploy with this error: "' + errorMsg + '".\\n\\nPlease fix the code. Return ONLY the full fixed JavaScript code. No explanations.\\n\\nCode:\\n' + code;
+                const prompt = \`
+The following Cloudflare Worker code failed to deploy with this error: "\${errorMsg}".
+
+Please fix the code.
+Return ONLY a valid JSON object with this format (no markdown):
+{
+  "code": "full fixed javascript code",
+  "vars": { "KEY": "VALUE" }
+}
+If no new vars are needed, return "vars": {}.
+
+Code:
+\${code}
+\`;
 
                 const res = await fetch('/api/ai/generate', {
                     method: 'POST',
@@ -913,7 +1005,16 @@ export default {
                     body: JSON.stringify({ prompt, apiKey, model })
                 });
                 const data = await res.json();
-                if (data.success) return data.code;
+                if (data.success) {
+                    try {
+                        let jsonStr = data.code.trim();
+                        if (jsonStr.startsWith('\`\`\`json')) jsonStr = jsonStr.replace(/\`\`\`json/g, '').replace(/\`\`\`/g, '');
+                        else if (jsonStr.startsWith('\`\`\`')) jsonStr = jsonStr.replace(/\`\`\`/g, '');
+                        return JSON.parse(jsonStr);
+                    } catch(e) {
+                        return null;
+                    }
+                }
                 else return null;
             } catch (e) {
                 return null;
@@ -1132,233 +1233,6 @@ ${commonHead}
     `)
 })
 
-app.get('/dns', (c) => {
-    return c.html(html`
-<!DOCTYPE html>
-<html lang="en">
-${commonHead}
-<body class="p-4 md:p-8 flex justify-center items-start">
-    <div class="max-w-6xl w-full space-y-6">
-        <header class="flex justify-between items-center glass-card p-4">
-             <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
-                CF Mini
-            </h1>
-            <nav class="hidden md:flex space-x-1">
-                <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
-                <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
-                <a href="/dns" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">DNS</a>
-                <a href="/ai" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">AI Gen</a>
-            </nav>
-            <div class="flex items-center gap-3">
-                <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
-                <a href="/logout" class="text-sm text-red-300 hover:text-red-400">Logout</a>
-            </div>
-        </header>
-
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <!-- Zone List -->
-            <div class="glass-card p-6">
-                <h2 class="text-xl font-semibold text-pink-300 mb-4">Zones</h2>
-                <div id="zone-list" class="space-y-2">
-                    <div class="loader mx-auto"></div>
-                </div>
-            </div>
-
-            <!-- DNS Records -->
-            <div class="glass-card p-6 md:col-span-2">
-                <div class="flex justify-between items-center mb-4">
-                    <h2 class="text-xl font-semibold text-blue-300">DNS Records</h2>
-                    <button id="add-record-btn" onclick="showAddRecordModal()" class="hidden text-xs bg-blue-500/20 text-blue-300 px-3 py-1 rounded hover:bg-blue-500/30">+ Add Record</button>
-                </div>
-                <div id="dns-list" class="space-y-2 max-h-[500px] overflow-y-auto">
-                    <p class="text-gray-500 text-center">Select a zone to view records.</p>
-                </div>
-            </div>
-        </div>
-
-        <!-- Add Record Modal (Simple implementation) -->
-        <div id="modal-overlay" class="fixed inset-0 bg-black/80 hidden flex justify-center items-center p-4 z-50">
-            <div class="glass-card p-6 w-full max-w-lg space-y-4 bg-[#1a202c]">
-                <h3 class="text-lg font-bold text-white">Add DNS Record</h3>
-                <div class="grid grid-cols-1 md:grid-cols-4 gap-2">
-                    <select id="dns-type" class="input-field p-2 rounded">
-                        <option value="A">A</option>
-                        <option value="CNAME">CNAME</option>
-                        <option value="AAAA">AAAA</option>
-                        <option value="TXT">TXT</option>
-                    </select>
-                    <input id="dns-name" placeholder="Name (@ for root)" class="input-field p-2 rounded col-span-2">
-                    <div class="flex items-center gap-2">
-                        <input type="checkbox" id="dns-proxied" checked> <label class="text-sm text-gray-300">Proxy</label>
-                    </div>
-                </div>
-                <input id="dns-content" placeholder="Content (e.g. 1.2.3.4)" class="input-field w-full p-2 rounded">
-
-                <div class="flex justify-end gap-2">
-                    <button onclick="closeModal()" class="px-4 py-2 text-gray-300 hover:text-white">Cancel</button>
-                    <button onclick="createRecord()" class="px-4 py-2 bg-blue-600 rounded text-white">Save</button>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        let currentZoneId = null;
-        let dnsRecords = [];
-        let currentRecordId = null;
-
-        async function loadZones() {
-            const list = document.getElementById('zone-list');
-            list.innerHTML = '<div class="loader mx-auto"></div>';
-
-            try {
-                const res = await fetch('/api/zones');
-                if (res.status === 401) { window.location.href = '/login'; return; }
-                const data = await res.json();
-
-                if (data.success) {
-                    if (data.result.length === 0) {
-                        list.innerHTML = '<p class="text-gray-500 text-center">No zones found.</p>';
-                        return;
-                    }
-                    list.innerHTML = data.result.map(z => \`
-                        <div onclick="loadDns('\${z.id}', '\${z.name}')" class="cursor-pointer bg-white/5 p-3 rounded hover:bg-white/10 transition">
-                            <h3 class="font-semibold text-white">\${z.name}</h3>
-                            <p class="text-xs text-gray-500">\${z.status}</p>
-                        </div>
-                    \`).join('');
-                } else {
-                    list.innerHTML = '<p class="text-red-400">Failed to load zones.</p>';
-                }
-            } catch (e) {
-                 list.innerHTML = '<p class="text-red-400">Error loading zones.</p>';
-            }
-        }
-
-        async function loadDns(zoneId, zoneName) {
-            currentZoneId = zoneId;
-            const list = document.getElementById('dns-list');
-            document.getElementById('add-record-btn').classList.remove('hidden');
-            list.innerHTML = '<div class="loader mx-auto"></div>';
-
-            try {
-                const res = await fetch('/api/zones/' + zoneId + '/dns');
-                const data = await res.json();
-
-                if (data.success) {
-                    dnsRecords = data.result;
-                     if (data.result.length === 0) {
-                        list.innerHTML = '<p class="text-gray-500 text-center">No records found for ' + zoneName + '.</p>';
-                        return;
-                    }
-                    list.innerHTML = data.result.map(r => \`
-                        <div class="flex flex-col md:flex-row justify-between items-start md:items-center bg-black/20 p-3 rounded-lg border border-white/5 gap-2">
-                            <div class="flex items-center gap-3">
-                                <span class="bg-blue-500/20 text-blue-300 text-xs px-2 py-1 rounded font-bold w-12 text-center">\${r.type}</span>
-                                <div>
-                                    <p class="text-sm text-white">\${r.name}</p>
-                                    <p class="text-xs text-gray-400 truncate max-w-[200px]">\${r.content}</p>
-                                </div>
-                            </div>
-                             <div class="flex items-center gap-2">
-                                <span class="\${r.proxied ? 'text-orange-400' : 'text-gray-500'} text-xs">\${r.proxied ? 'Proxied' : 'DNS Only'}</span>
-                                <button onclick="editDns('\${r.id}')" class="text-xs bg-blue-500/20 text-blue-300 px-2 py-1 rounded hover:bg-blue-500/30">Edit</button>
-                                <button onclick="deleteDns('\${r.id}')" class="text-xs bg-red-500/20 text-red-300 px-2 py-1 rounded hover:bg-red-500/30">Del</button>
-                            </div>
-                        </div>
-                    \`).join('');
-                } else {
-                    list.innerHTML = '<p class="text-red-400">Failed to load records.</p>';
-                }
-            } catch (e) {
-                 list.innerHTML = '<p class="text-red-400">Error loading records.</p>';
-            }
-        }
-
-        function showAddRecordModal() {
-            if (!currentZoneId) return;
-            currentRecordId = null;
-            document.getElementById('dns-type').value = 'A';
-            document.getElementById('dns-name').value = '';
-            document.getElementById('dns-content').value = '';
-            document.getElementById('dns-proxied').checked = true;
-            document.querySelector('#modal-overlay h3').textContent = 'Add DNS Record';
-            document.getElementById('modal-overlay').classList.remove('hidden');
-        }
-
-        function editDns(id) {
-            const r = dnsRecords.find(x => x.id === id);
-            if (!r) return;
-            currentRecordId = id;
-            document.getElementById('dns-type').value = r.type;
-            document.getElementById('dns-name').value = r.name;
-            document.getElementById('dns-content').value = r.content;
-            document.getElementById('dns-proxied').checked = r.proxied;
-            document.querySelector('#modal-overlay h3').textContent = 'Edit DNS Record';
-            document.getElementById('modal-overlay').classList.remove('hidden');
-        }
-
-        function closeModal() {
-            document.getElementById('modal-overlay').classList.add('hidden');
-        }
-
-        async function createRecord() {
-            const type = document.getElementById('dns-type').value;
-            const name = document.getElementById('dns-name').value;
-            const content = document.getElementById('dns-content').value;
-            const proxied = document.getElementById('dns-proxied').checked;
-
-            if (!name || !content) return alert('Fill all fields');
-
-            try {
-                let url = '/api/zones/' + currentZoneId + '/dns';
-                let method = 'POST';
-                if (currentRecordId) {
-                    url += '/' + currentRecordId;
-                    method = 'PUT';
-                }
-
-                const res = await fetch(url, {
-                    method: method,
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ type, name, content, proxied })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    closeModal();
-                    loadDns(currentZoneId);
-                } else {
-                    alert('Error: ' + (data.errors?.[0]?.message || 'Unknown'));
-                }
-            } catch (e) {
-                alert('System Error: ' + e.message);
-            }
-        }
-
-        async function deleteDns(recordId) {
-            if (!confirm('Delete record?')) return;
-            try {
-                const res = await fetch('/api/zones/' + currentZoneId + '/dns/' + recordId, {
-                    method: 'DELETE'
-                });
-                const data = await res.json();
-                if (data.success) {
-                    loadDns(currentZoneId);
-                } else {
-                     alert('Error: ' + (data.errors?.[0]?.message || 'Unknown'));
-                }
-            } catch (e) {
-                alert('System Error: ' + e.message);
-            }
-        }
-
-        loadZones();
-    </script>
-</body>
-</html>
-    `)
-})
-
 app.get('/ai', (c) => {
     return c.html(html`
 <!DOCTYPE html>
@@ -1412,7 +1286,7 @@ ${commonHead}
 // 1. Deploy (Updated to use Context)
 app.post('/api/deploy', async (c) => {
     try {
-        const { workerName, mode, content } = await c.req.json();
+        const { workerName, mode, content, envVars } = await c.req.json();
         const accountId = c.get('accountId');
         const apiToken = c.get('apiToken');
 
@@ -1436,15 +1310,58 @@ app.post('/api/deploy', async (c) => {
         if (isModule) {
             const formData = new FormData();
             formData.append('files', new Blob([finalCode], { type: 'application/javascript+module' }), 'worker.js');
-            formData.append('metadata', JSON.stringify({ main_module: 'worker.js' }));
+
+            // Construct Metadata
+            const metadata = {
+                main_module: 'worker.js',
+                bindings: []
+            };
+
+            // Add Env Vars if present
+            if (envVars && Object.keys(envVars).length > 0) {
+                for (const [key, value] of Object.entries(envVars)) {
+                    metadata.bindings.push({
+                        type: 'plain_text',
+                        name: key,
+                        text: value
+                    });
+                }
+            }
+
+            formData.append('metadata', JSON.stringify(metadata));
             body = formData;
         } else {
-            headers['Content-Type'] = 'application/javascript';
+            // Note: Cloudflare API for non-module script upload is simpler but doesn't easily support metadata/bindings in the same call
+            // unless using the multipart/form-data endpoint too, which we should default to if we want env vars support.
+            // For now, let's assume if env vars are used, we force module-like upload structure or warn?
+            // Actually, the 'script' upload endpoint supports metadata in multipart too.
+            // So we can use the same logic, just change type to 'application/javascript'.
+
+            const formData = new FormData();
+            formData.append('files', new Blob([finalCode], { type: 'application/javascript' }), 'worker.js');
+
+            const metadata = {
+                body_part: 'worker.js',
+                bindings: []
+            };
+
+             if (envVars && Object.keys(envVars).length > 0) {
+                for (const [key, value] of Object.entries(envVars)) {
+                    metadata.bindings.push({
+                        type: 'plain_text',
+                        name: key,
+                        text: value
+                    });
+                }
+            }
+            formData.append('metadata', JSON.stringify(metadata));
+            body = formData;
+            // No content-type header for multipart, fetch sets it with boundary
         }
 
         const response = await fetch(url, {
             method: 'PUT',
-            headers: isModule ? { 'Authorization': headers['Authorization'] } : headers,
+            headers: { 'Authorization': headers['Authorization'] }, // Let fetch set Content-Type for FormData
             body: body
         });
 
@@ -1592,8 +1509,11 @@ app.post('/api/ai/generate', async (c) => {
 
         let rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-        // Cleanup markdown code blocks if present
-        rawText = rawText.replace(/```javascript/g, '').replace(/```/g, '').trim();
+        // Return raw text, filtering handled by client or here if needed.
+        // The client expects JSON for code+vars, so we leave it raw here for client to parse if it's the JSON mode,
+        // OR we can try to parse it here if we want to be strict.
+        // For flexibility, let's send it back as 'code' field and let client handle the structure since
+        // the client knows if it asked for JSON or not (though shared endpoint implies common structure).
 
         return c.json({ success: true, code: rawText });
 
