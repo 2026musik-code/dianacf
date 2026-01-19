@@ -926,3 +926,6 @@ export default {
     </script>
 </body>
 </html>
+`)
+})
+export default app
