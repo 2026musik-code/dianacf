@@ -4,5 +4,5 @@ compatibility_date = "2024-04-01"
 
 [[kv_namespaces]]
 binding = "MINI_KV"
-id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" # Placeholder ID for local dev
+id = "ceac1b6d1fe449a9818b35c4c7277788" # Placeholder ID for local dev
 preview_id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
