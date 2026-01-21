@@ -15,10 +15,24 @@ const authMiddleware = async (c, next) => {
 
   const accountId = getCookie(c, 'cf_account_id')
   const apiToken = getCookie(c, 'cf_api_token')
+  const accessKey = getCookie(c, 'access_key')
 
-  if (!accountId || !apiToken) {
+  if (!accountId || !apiToken || !accessKey) {
     if (c.req.path.startsWith('/api/')) return c.json({ error: 'Unauthorized' }, 401)
     return c.redirect('/login')
+  }
+
+  // Verify Access Key
+  const keyData = await getKey(c.env, accessKey)
+  if (!keyData || keyData.status !== 'active') {
+     if (c.req.path.startsWith('/api/')) return c.json({ error: 'Session Expired' }, 401)
+     return c.redirect('/logout')
+  }
+
+  const expiry = keyData.started_at + (keyData.duration * 3600 * 1000);
+  if (Date.now() > expiry) {
+      if (c.req.path.startsWith('/api/')) return c.json({ error: 'Session Expired' }, 401)
+      return c.redirect('/logout')
   }
 
   c.set('accountId', accountId)
@@ -224,8 +238,8 @@ ${commonHead}
 
         <form id="loginForm" class="space-y-4">
             <div>
-                <label class="block text-sm text-gray-400 mb-1">Access Key (Optional)</label>
-                <input type="text" id="accessKey" class="input-field w-full p-3 rounded-lg" placeholder="Enter Access Key from Admin">
+                <label class="block text-sm text-gray-400 mb-1">Access Key</label>
+                <input type="text" id="accessKey" class="input-field w-full p-3 rounded-lg" placeholder="Enter Access Key from Admin" required>
             </div>
             <div class="border-t border-white/10 my-4"></div>
             <div>
@@ -305,30 +319,31 @@ app.get('/login', (c) => c.html(loginPage))
 app.post('/api/login', async (c) => {
     const { accountId, apiToken, accessKey } = await c.req.json()
 
-    if (!accountId || !apiToken) {
-        return c.json({ success: false, error: 'Missing credentials' })
+    if (!accountId || !apiToken || !accessKey) {
+        return c.json({ success: false, error: 'Missing credentials or Access Key' })
     }
 
-    if (accessKey) {
-        const keyData = await getKey(c.env, accessKey)
-        if (!keyData) {
-            return c.json({ success: false, error: 'Invalid Access Key' })
-        }
-
-        const now = Date.now();
-        if (keyData.status === 'unused') {
-            keyData.status = 'active';
-            keyData.started_at = now;
-            keyData.user_agent = c.req.header('User-Agent');
-            keyData.ip = c.req.header('CF-Connecting-IP') || '127.0.0.1';
-            await updateKey(c.env, accessKey, keyData);
-        }
-        const expiry = keyData.started_at + (keyData.duration * 3600 * 1000);
-        if (now > expiry) {
-            return c.json({ success: false, error: 'Access Key Expired' })
-        }
-        setCookie(c, 'access_key', accessKey, { httpOnly: true, secure: true, path: '/', maxAge: 86400 * 7 })
+    // Validate Access Key (Mandatory)
+    const keyData = await getKey(c.env, accessKey)
+    if (!keyData) {
+        return c.json({ success: false, error: 'Invalid Access Key' })
     }
+
+    const now = Date.now();
+    if (keyData.status === 'unused') {
+        keyData.status = 'active';
+        keyData.started_at = now;
+        keyData.user_agent = c.req.header('User-Agent');
+        keyData.ip = c.req.header('CF-Connecting-IP') || '127.0.0.1';
+        await updateKey(c.env, accessKey, keyData);
+    }
+
+    const expiry = keyData.started_at + (keyData.duration * 3600 * 1000);
+    if (now > expiry) {
+        return c.json({ success: false, error: 'Access Key Expired' })
+    }
+
+    setCookie(c, 'access_key', accessKey, { httpOnly: true, secure: true, path: '/', maxAge: 86400 * 7 })
 
     const isValid = await verifyToken(apiToken)
     if (!isValid) {
