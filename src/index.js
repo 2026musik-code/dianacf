@@ -1248,6 +1248,240 @@ ${commonHead}
     `)
 })
 
+app.get('/dns', (c) => {
+    return c.html(html`
+<!DOCTYPE html>
+<html lang="en">
+${commonHead}
+<body class="p-4 md:p-8 flex justify-center items-start">
+    <div class="max-w-6xl w-full space-y-6">
+        <header class="flex justify-between items-center glass-card p-4">
+             <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
+                CF Mini
+            </h1>
+            <nav class="hidden md:flex space-x-1">
+                <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
+                <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
+                <a href="/dns" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">DNS</a>
+                <a href="/ai" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">AI Gen</a>
+            </nav>
+            <div class="flex items-center gap-3">
+                <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
+                <a href="/logout" class="text-sm text-red-300 hover:text-red-400">Logout</a>
+            </div>
+        </header>
+
+        <div class="glass-card p-6">
+            <div class="flex justify-between items-center mb-4">
+                <h2 class="text-xl font-semibold text-purple-300">DNS Zones</h2>
+                <button onclick="loadZones()" class="text-xs bg-white/10 px-2 py-1 rounded hover:bg-white/20">Refresh</button>
+            </div>
+            <div id="zone-list" class="space-y-2">
+                <div class="loader mx-auto"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- DNS Records Modal -->
+    <div id="dns-modal" class="fixed inset-0 bg-black/90 hidden flex justify-center items-start p-4 z-50 overflow-y-auto">
+        <div class="glass-card p-6 w-full max-w-4xl space-y-4 bg-[#1a202c] mt-10">
+            <div class="flex justify-between items-center">
+                 <h3 id="dns-modal-title" class="text-lg font-bold text-white">Manage DNS</h3>
+                 <button onclick="closeDnsModal()" class="text-gray-400 hover:text-white">&times;</button>
+            </div>
+
+            <!-- Add Record Form -->
+            <div class="bg-white/5 p-4 rounded-lg space-y-3">
+                <h4 class="text-sm font-bold text-gray-300">Add Record</h4>
+                <div class="grid grid-cols-1 md:grid-cols-5 gap-2">
+                    <select id="rec-type" class="input-field p-2 rounded text-sm">
+                        <option value="A">A</option>
+                        <option value="AAAA">AAAA</option>
+                        <option value="CNAME">CNAME</option>
+                        <option value="TXT">TXT</option>
+                        <option value="MX">MX</option>
+                        <option value="NS">NS</option>
+                    </select>
+                    <input id="rec-name" placeholder="Name (@ for root)" class="input-field p-2 rounded text-sm">
+                    <input id="rec-content" placeholder="IPv4 or Content" class="input-field p-2 rounded text-sm md:col-span-2">
+                    <div class="flex items-center gap-2">
+                        <label class="flex items-center space-x-2 text-sm text-gray-400 cursor-pointer">
+                            <input type="checkbox" id="rec-proxied" class="form-checkbox h-4 w-4 text-purple-600 rounded border-gray-600 bg-gray-700">
+                            <span>Proxy</span>
+                        </label>
+                        <button onclick="addRecord()" id="btn-add-rec" class="bg-green-600 hover:bg-green-500 text-white px-3 py-2 rounded text-sm flex-1">Add</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Records Table -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-sm text-left text-gray-400">
+                    <thead class="text-xs text-gray-200 uppercase bg-white/5">
+                        <tr>
+                            <th class="px-4 py-2">Type</th>
+                            <th class="px-4 py-2">Name</th>
+                            <th class="px-4 py-2">Content</th>
+                            <th class="px-4 py-2">Proxy</th>
+                            <th class="px-4 py-2">TTL</th>
+                            <th class="px-4 py-2">Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="dns-records-body"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentZoneId = null;
+
+        async function loadZones() {
+            const list = document.getElementById('zone-list');
+            list.innerHTML = '<div class="loader mx-auto"></div>';
+
+            try {
+                const res = await fetch('/api/zones');
+                if (res.status === 401) { window.location.href = '/login'; return; }
+                const data = await res.json();
+
+                if (data.success) {
+                    if (data.result.length === 0) {
+                         list.innerHTML = '<p class="text-gray-500 text-center">No zones found.</p>';
+                         return;
+                    }
+                    list.innerHTML = data.result.map(z => \`
+                        <div class="flex justify-between items-center bg-black/20 p-3 rounded-lg border border-white/5 hover:bg-white/5 cursor-pointer" onclick="openDns('\${z.id}', '\${z.name}')">
+                            <div>
+                                <h3 class="font-bold text-white">\${z.name}</h3>
+                                <p class="text-xs text-gray-400">\${z.status}</p>
+                            </div>
+                            <div class="text-purple-300 text-sm">Manage &rarr;</div>
+                        </div>
+                    \`).join('');
+                } else {
+                    list.innerHTML = '<p class="text-red-400">Failed to load zones.</p>';
+                }
+            } catch (e) {
+                 list.innerHTML = '<p class="text-red-400">Error loading zones.</p>';
+            }
+        }
+
+        async function openDns(zoneId, zoneName) {
+            currentZoneId = zoneId;
+            document.getElementById('dns-modal').classList.remove('hidden');
+            document.getElementById('dns-modal-title').textContent = 'DNS: ' + zoneName;
+            loadRecords();
+        }
+
+        function closeDnsModal() {
+            document.getElementById('dns-modal').classList.add('hidden');
+        }
+
+        async function loadRecords() {
+            const tbody = document.getElementById('dns-records-body');
+            tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4"><div class="loader mx-auto"></div></td></tr>';
+
+            try {
+                const res = await fetch('/api/zones/' + currentZoneId + '/dns');
+                const data = await res.json();
+
+                if (data.success) {
+                    if (data.result.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" class="text-center p-4">No records found.</td></tr>';
+                        return;
+                    }
+                    tbody.innerHTML = data.result.map(r => \`
+                        <tr class="border-b border-white/5 hover:bg-white/5">
+                            <td class="px-4 py-2 font-bold \${getTypeColor(r.type)}">\${r.type}</td>
+                            <td class="px-4 py-2">\${r.name}</td>
+                            <td class="px-4 py-2 max-w-xs truncate" title="\${r.content}">\${r.content}</td>
+                            <td class="px-4 py-2">
+                                \${r.proxied
+                                    ? '<span class="text-orange-400 text-xs">☁️ Proxied</span>'
+                                    : '<span class="text-gray-500 text-xs">DNS Only</span>'}
+                            </td>
+                            <td class="px-4 py-2 text-xs">\${r.ttl === 1 ? 'Auto' : r.ttl}</td>
+                            <td class="px-4 py-2">
+                                <button onclick="deleteRecord('\${r.id}')" class="text-red-400 hover:text-red-300 text-xs">Delete</button>
+                            </td>
+                        </tr>
+                    \`).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-red-400 p-4">Failed to load records.</td></tr>';
+                }
+            } catch (e) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-red-400 p-4">Error loading records.</td></tr>';
+            }
+        }
+
+        function getTypeColor(type) {
+            switch(type) {
+                case 'A': return 'text-blue-400';
+                case 'CNAME': return 'text-orange-400';
+                case 'TXT': return 'text-green-400';
+                case 'MX': return 'text-pink-400';
+                default: return 'text-gray-300';
+            }
+        }
+
+        async function addRecord() {
+            const type = document.getElementById('rec-type').value;
+            const name = document.getElementById('rec-name').value;
+            const content = document.getElementById('rec-content').value;
+            const proxied = document.getElementById('rec-proxied').checked;
+            const ttl = 1; // Auto
+
+            if (!name || !content) return alert('Fill all fields');
+
+            const btn = document.getElementById('btn-add-rec');
+            btn.textContent = '...';
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/zones/' + currentZoneId + '/dns', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ type, name, content, proxied, ttl })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    document.getElementById('rec-name').value = '';
+                    document.getElementById('rec-content').value = '';
+                    loadRecords();
+                } else {
+                    alert('Error: ' + (data.errors?.[0]?.message || 'Unknown'));
+                }
+            } catch(e) {
+                alert('System Error: ' + e.message);
+            } finally {
+                btn.textContent = 'Add';
+                btn.disabled = false;
+            }
+        }
+
+        async function deleteRecord(recordId) {
+            if (!confirm('Delete this record?')) return;
+            try {
+                 const res = await fetch('/api/zones/' + currentZoneId + '/dns/' + recordId, {
+                    method: 'DELETE'
+                });
+                const data = await res.json();
+                if (data.success) loadRecords();
+                else alert('Failed: ' + (data.errors?.[0]?.message || 'Unknown'));
+            } catch(e) {
+                alert('Error: ' + e.message);
+            }
+        }
+
+        loadZones();
+    </script>
+</body>
+</html>
+    `)
+})
+
 app.get('/ai', (c) => {
     return c.html(html`
 <!DOCTYPE html>
@@ -1307,8 +1541,44 @@ app.post('/api/deploy', async (c) => {
 
         let finalCode = content;
         if (mode === 'github') {
-            const ghRes = await fetch(content);
-            if (!ghRes.ok) throw new Error('Failed to fetch from GitHub');
+            let targetUrl = content;
+
+            // Smart GitHub Handling
+            if (content.includes('github.com') && !content.includes('raw.githubusercontent.com')) {
+                // Try to parse: https://github.com/User/Repo
+                const parts = content.split('github.com/')[1].split('/');
+                if (parts.length >= 2) {
+                    const user = parts[0];
+                    const repo = parts[1];
+                    const branch = parts[2] === 'tree' ? parts[3] : 'main'; // Handle /tree/branch if present, else default main
+
+                    // Priority List
+                    const candidates = [
+                         `https://raw.githubusercontent.com/${user}/${repo}/${branch}/worker.js`,
+                         `https://raw.githubusercontent.com/${user}/${repo}/${branch}/src/index.js`,
+                         `https://raw.githubusercontent.com/${user}/${repo}/${branch}/index.js`,
+                         `https://raw.githubusercontent.com/${user}/${repo}/master/worker.js`, // Fallback to master
+                         `https://raw.githubusercontent.com/${user}/${repo}/master/src/index.js`,
+                         `https://raw.githubusercontent.com/${user}/${repo}/master/index.js`
+                    ];
+
+                    let found = false;
+                    for (const url of candidates) {
+                        try {
+                            const probe = await fetch(url);
+                            if (probe.ok) {
+                                targetUrl = url;
+                                found = true;
+                                break;
+                            }
+                        } catch(e) {}
+                    }
+                    if (!found) throw new Error('Could not find worker.js, src/index.js, or index.js in that repo.');
+                }
+            }
+
+            const ghRes = await fetch(targetUrl);
+            if (!ghRes.ok) throw new Error('Failed to fetch from GitHub: ' + ghRes.statusText);
             finalCode = await ghRes.text();
         }
 
