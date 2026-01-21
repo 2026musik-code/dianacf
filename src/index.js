@@ -1556,27 +1556,66 @@ app.get('/ai', (c) => {
 <!DOCTYPE html>
 <html lang="en">
 ${commonHead}
-<body class="p-8 flex justify-center items-center h-screen">
-    <div class="glass-card p-8 w-full max-w-md space-y-6">
-        <header>
-             <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
-                AI Generation Settings
-            </h1>
-            <p class="text-gray-400 text-sm mt-2">Configure your Gemini API Key</p>
-        </header>
+<body class="flex flex-col h-screen overflow-hidden">
+    <!-- Header -->
+    <header class="flex justify-between items-center glass-card p-4 mx-4 mt-4 md:mx-8 md:mt-8">
+            <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
+            CF Mini AI
+        </h1>
+        <nav class="hidden md:flex space-x-1">
+            <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
+            <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
+            <a href="/dns" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">DNS</a>
+            <a href="/ai" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">AI Gen</a>
+        </nav>
+        <div class="flex items-center gap-3">
+            <a href="/" class="md:hidden text-gray-300 hover:text-white">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+            </a>
+        </div>
+    </header>
 
-        <div class="space-y-4">
-            <div>
-                <label class="block text-sm text-gray-400 mb-1">Gemini API Key</label>
-                <input type="password" id="apiKey" class="input-field w-full p-3 rounded-lg" placeholder="AIzaSy...">
+    <!-- Main Content Area -->
+    <main class="flex-1 overflow-hidden relative p-4 md:p-8 flex flex-col">
+
+        <!-- Connection Screen -->
+        <div id="connect-screen" class="absolute inset-0 flex justify-center items-center p-4 z-20 backdrop-blur-sm transition-opacity duration-300">
+            <div class="glass-card p-8 w-full max-w-md space-y-6 bg-[#1a202c]/90">
+                <div class="text-center">
+                    <h2 class="text-xl font-bold text-white">Connect to Gemini</h2>
+                    <p class="text-gray-400 text-xs mt-1">Enter your API Key to start the AI Terminal</p>
+                </div>
+                <div>
+                    <input type="password" id="apiKey" class="input-field w-full p-3 rounded-lg text-center font-mono text-sm" placeholder="AIzaSy...">
+                </div>
+                <button onclick="connectAi()" id="btn-connect" class="btn-primary w-full py-3 rounded-lg font-bold text-white shadow-lg flex justify-center items-center gap-2">
+                    Connect
+                </button>
             </div>
-            <button onclick="saveKey()" class="btn-primary w-full py-3 rounded-lg font-bold text-white shadow-lg">Save Key</button>
         </div>
 
-        <div class="text-center pt-4">
-             <a href="/" class="text-blue-300 text-sm hover:underline">Back to Dashboard</a>
+        <!-- Chat Interface -->
+        <div id="chat-interface" class="flex flex-col h-full glass-card overflow-hidden opacity-0 transition-opacity duration-500 pointer-events-none">
+            <!-- Messages Area -->
+            <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-4 font-mono text-sm">
+                <div class="text-gray-500 text-center text-xs mt-4">
+                    -- Connected to Cloudflare Worker Assistant --<br>
+                    Type "Create a worker that..." or "Help me with..."
+                </div>
+            </div>
+
+            <!-- Input Area -->
+            <div class="p-4 bg-white/5 border-t border-white/10">
+                <div class="flex gap-2">
+                    <textarea id="chat-input" rows="1" class="input-field flex-1 p-3 rounded-lg resize-none" placeholder="Command the AI..." onkeydown="handleEnter(event)"></textarea>
+                    <button onclick="sendChat()" id="btn-send" class="bg-blue-600 hover:bg-blue-500 text-white px-4 rounded-lg">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9-2-9-18-9 18 9-2zm0 0v-8"></path></svg>
+                    </button>
+                </div>
+            </div>
         </div>
-    </div>
+
+    </main>
 
     <!-- Bottom Navigation (Mobile) -->
     <nav class="md:hidden fixed bottom-0 left-0 w-full glass-card border-t border-white/10 rounded-none rounded-t-xl z-40 bg-[#1a202c]/90 backdrop-blur-lg pb-safe">
@@ -1601,18 +1640,189 @@ ${commonHead}
     </nav>
 
     <script>
+        let apiKey = '';
+
         window.addEventListener('load', () => {
             const k = localStorage.getItem('gemini_key');
-            if (k) document.getElementById('apiKey').value = k;
-        });
-        function saveKey() {
-            const k = document.getElementById('apiKey').value;
             if (k) {
-                localStorage.setItem('gemini_key', k);
-                alert('Key saved locally!');
+                document.getElementById('apiKey').value = k;
+                // Auto connect if key exists
+                // connectAi(); // Optional: User might want to change it.
+            }
+        });
+
+        async function connectAi() {
+            const k = document.getElementById('apiKey').value.trim();
+            if (!k) return alert('Enter API Key');
+
+            const btn = document.getElementById('btn-connect');
+            const originalText = btn.innerHTML;
+            btn.innerHTML = '<div class="loader"></div>';
+            btn.disabled = true;
+
+            try {
+                // Verify by sending a short hello
+                const res = await fetch('/api/ai/generate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ prompt: 'Reply with "OK"', apiKey: k })
+                });
+                const data = await res.json();
+
+                if (data.success) {
+                    localStorage.setItem('gemini_key', k);
+                    apiKey = k;
+                    showChat();
+                } else {
+                    alert('Connection Failed: ' + data.error);
+                }
+            } catch(e) {
+                alert('Error: ' + e.message);
+            } finally {
+                btn.innerHTML = originalText;
+                btn.disabled = false;
+            }
+        }
+
+        function showChat() {
+            const screen = document.getElementById('connect-screen');
+            const chat = document.getElementById('chat-interface');
+
+            screen.classList.add('opacity-0', 'pointer-events-none');
+            setTimeout(() => {
+                screen.style.display = 'none';
+                chat.classList.remove('opacity-0', 'pointer-events-none');
+                chat.classList.add('opacity-100');
+            }, 300);
+        }
+
+        function handleEnter(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendChat();
+            }
+        }
+
+        async function sendChat() {
+            const input = document.getElementById('chat-input');
+            const msg = input.value.trim();
+            if (!msg) return;
+
+            // Append User Message
+            appendMessage('user', msg);
+            input.value = '';
+
+            // Loading State
+            const loadingId = appendMessage('ai', '...');
+
+            const prompt = \`
+You are a Cloudflare Worker Assistant.
+The user wants to create or modify workers.
+If the user asks for code, provide it in a code block like:
+\\\`\\\`\\\`javascript
+... code ...
+\\\`\\\`\\\`
+Answer concisely.
+
+User: \${msg}
+\`;
+
+            try {
+                const res = await fetch('/api/ai/generate', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ prompt, apiKey })
+                });
+                const data = await res.json();
+
+                removeMessage(loadingId);
+
+                if (data.success) {
+                    appendMessage('ai', data.code);
+                } else {
+                    appendMessage('error', 'Error: ' + data.error);
+                }
+            } catch(e) {
+                removeMessage(loadingId);
+                appendMessage('error', 'System Error');
+            }
+        }
+
+        function appendMessage(role, text) {
+            const container = document.getElementById('chat-messages');
+            const div = document.createElement('div');
+            const id = 'msg-' + Date.now();
+            div.id = id;
+
+            if (role === 'user') {
+                div.className = 'flex justify-end';
+                div.innerHTML = \`
+                    <div class="bg-blue-600/20 text-blue-200 p-3 rounded-lg max-w-[80%] whitespace-pre-wrap">\${escapeHtml(text)}</div>
+                \`;
+            } else if (role === 'ai') {
+                div.className = 'flex justify-start';
+                let content = parseMarkdown(text);
+                div.innerHTML = \`
+                    <div class="bg-white/5 text-gray-200 p-3 rounded-lg max-w-[90%] space-y-2">\${content}</div>
+                \`;
             } else {
-                localStorage.removeItem('gemini_key');
-                alert('Key cleared.');
+                 div.className = 'flex justify-center';
+                 div.innerHTML = \`<div class="text-red-400 text-xs">\${text}</div>\`;
+            }
+
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            return id;
+        }
+
+        function removeMessage(id) {
+            const el = document.getElementById(id);
+            if(el) el.remove();
+        }
+
+        function escapeHtml(text) {
+            const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+            return text.replace(/[&<>"']/g, function(m) { return map[m]; });
+        }
+
+        function parseMarkdown(text) {
+            // Simple markdown parser for code blocks
+            // Replace \`\`\`lang ... \`\`\` with a text area and button
+
+            // 1. Split by code blocks
+            const parts = text.split(/(\`\`\`[\\s\\S]*?\`\`\`)/g);
+
+            return parts.map(part => {
+                if (part.startsWith('\`\`\`')) {
+                    const content = part.replace(/^\`\`\`[a-z]*\\n?/, '').replace(/\`\`\`$/, '');
+                    // Create deployable block
+                    const id = 'code-' + Math.random().toString(36).substr(2, 9);
+                    // Use a textarea for display to preserve formatting easily, but read-only
+                    // Or pre tag
+                    return \`
+                        <div class="mt-2 bg-black/50 rounded-lg border border-white/10 overflow-hidden">
+                            <div class="flex justify-between items-center bg-white/5 px-3 py-1">
+                                <span class="text-xs text-gray-400">Code</span>
+                                <button onclick="deployThis('\${id}')" class="text-xs bg-purple-600 hover:bg-purple-500 text-white px-2 py-1 rounded">Use This Code</button>
+                            </div>
+                            <pre id="\${id}" class="p-3 overflow-x-auto text-xs text-green-300 font-mono scrollbar-thin">\${escapeHtml(content)}</pre>
+                        </div>
+                    \`;
+                } else {
+                    return \`<p>\${escapeHtml(part)}</p>\`;
+                }
+            }).join('');
+        }
+
+        function deployThis(id) {
+            const code = document.getElementById(id).textContent;
+            if(!code) return;
+
+            localStorage.setItem('edit_worker_code', code);
+            localStorage.setItem('edit_worker_name', 'ai-generated-' + Math.floor(Math.random()*1000));
+
+            if(confirm('Go to Deploy page with this code?')) {
+                window.location.href = '/';
             }
         }
     </script>
