@@ -141,6 +141,91 @@ async function cfRequest(endpoint, method, apiToken, body = null) {
 
 // --- Views ---
 
+const renderHeader = (accountId, activeTab, extraClasses = '') => html`
+    <header class="flex justify-between items-center glass-card p-4 relative z-50 ${extraClasses}">
+        <div class="flex items-center gap-4">
+             <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
+                CF Mini
+            </h1>
+            <nav class="hidden md:flex space-x-1">
+                <a href="/" class="px-3 py-1 rounded-md ${activeTab === 'deploy' ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-gray-300'} text-sm">Deploy</a>
+                <a href="/workers" class="px-3 py-1 rounded-md ${activeTab === 'workers' ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-gray-300'} text-sm">Workers</a>
+                <a href="/dns" class="px-3 py-1 rounded-md ${activeTab === 'dns' ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-gray-300'} text-sm">DNS</a>
+                <a href="/ai" class="px-3 py-1 rounded-md ${activeTab === 'ai' ? 'bg-white/10 text-white' : 'hover:bg-white/5 text-gray-300'} text-sm">AI Gen</a>
+            </nav>
+        </div>
+
+        <!-- Profile Section -->
+        <div class="relative">
+            <button onclick="toggleProfile()" class="flex items-center justify-center w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 hover:from-blue-400 hover:to-purple-500 shadow-lg transition-transform hover:scale-105 border border-white/20">
+                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+            </button>
+
+            <!-- Dropdown -->
+            <div id="profile-dropdown" class="absolute right-0 mt-3 w-72 glass-card border border-white/10 rounded-xl shadow-2xl transform scale-95 opacity-0 pointer-events-none transition-all duration-200 origin-top-right bg-[#1a202c]/95 backdrop-blur-xl">
+                <div class="p-6 space-y-4">
+                    <div class="text-center">
+                        <div class="w-16 h-16 mx-auto rounded-full bg-gradient-to-r from-pink-500 via-purple-500 to-indigo-500 p-[2px]">
+                            <div class="w-full h-full rounded-full bg-black/50 flex items-center justify-center">
+                                <span class="text-2xl">👤</span>
+                            </div>
+                        </div>
+                        <h3 id="user-name" class="mt-3 text-lg font-bold text-transparent bg-clip-text bg-gradient-to-r from-blue-200 to-purple-200">Loading...</h3>
+                        <p id="user-email" class="text-xs text-gray-400">...</p>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-[10px] uppercase tracking-wider text-gray-500 font-bold">Cloudflare ID</label>
+                        <div class="bg-black/30 p-2 rounded border border-white/5 font-mono text-xs text-green-400 break-all select-all">
+                            ${accountId}
+                        </div>
+                    </div>
+
+                    <a href="/logout" class="block w-full text-center py-2 rounded-lg bg-gradient-to-r from-red-500/20 to-pink-500/20 text-red-300 border border-red-500/30 hover:bg-red-500/30 transition text-sm font-bold">
+                        Sign Out
+                    </a>
+                </div>
+            </div>
+        </div>
+    </header>
+    <script>
+        let profileOpen = false;
+        async function toggleProfile() {
+            const el = document.getElementById('profile-dropdown');
+            profileOpen = !profileOpen;
+
+            if (profileOpen) {
+                el.classList.remove('opacity-0', 'pointer-events-none', 'scale-95');
+                el.classList.add('opacity-100', 'scale-100');
+
+                if (document.getElementById('user-name').textContent === 'Loading...') {
+                    try {
+                        const res = await fetch('/api/user/details');
+                        const data = await res.json();
+                        if (data.success) {
+                            document.getElementById('user-name').textContent = data.name;
+                            document.getElementById('user-email').textContent = data.email;
+                        } else {
+                             document.getElementById('user-name').textContent = 'Cloudflare User';
+                        }
+                    } catch(e) {}
+                }
+            } else {
+                el.classList.add('opacity-0', 'pointer-events-none', 'scale-95');
+                el.classList.remove('opacity-100', 'scale-100');
+            }
+        }
+
+        window.addEventListener('click', (e) => {
+            const dropdown = document.getElementById('profile-dropdown');
+            const btn = document.querySelector('button[onclick="toggleProfile()"]');
+            if (profileOpen && dropdown && !dropdown.contains(e.target) && !btn.contains(e.target)) {
+                toggleProfile();
+            }
+        });
+    </script>
+`;
+
 const commonHead = html`
 <head>
     <meta charset="UTF-8">
@@ -602,23 +687,7 @@ ${commonHead}
 <body class="p-4 md:p-8 flex justify-center items-start">
     <div class="max-w-6xl w-full space-y-6">
         <!-- Header -->
-        <header class="flex justify-between items-center glass-card p-4">
-            <div class="flex items-center gap-4">
-                 <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
-                    CF Mini
-                </h1>
-                <nav class="hidden md:flex space-x-1">
-                    <a href="/" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">Deploy</a>
-                    <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
-                    <a href="/dns" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">DNS</a>
-                    <a href="/ai" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">AI Gen</a>
-                </nav>
-            </div>
-            <div class="flex items-center gap-3">
-                <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
-                <a href="/logout" class="text-sm text-red-300 hover:text-red-400">Logout</a>
-            </div>
-        </header>
+        ${renderHeader(c.get('accountId'), 'deploy')}
 
         <!-- Progress Bar -->
         <div id="progress-container" class="fixed top-0 left-0 w-full h-1 bg-gray-800 hidden z-50">
@@ -1072,21 +1141,7 @@ app.get('/workers', (c) => {
 ${commonHead}
 <body class="p-4 md:p-8 flex justify-center items-start">
     <div class="max-w-6xl w-full space-y-6">
-        <header class="flex justify-between items-center glass-card p-4">
-             <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
-                CF Mini
-            </h1>
-            <nav class="hidden md:flex space-x-1">
-                <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
-                <a href="/workers" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">Workers</a>
-                <a href="/dns" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">DNS</a>
-                <a href="/ai" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">AI Gen</a>
-            </nav>
-            <div class="flex items-center gap-3">
-                <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
-                <a href="/logout" class="text-sm text-red-300 hover:text-red-400">Logout</a>
-            </div>
-        </header>
+        ${renderHeader(c.get('accountId'), 'workers')}
 
         <div class="glass-card p-6">
             <div class="flex justify-between items-center mb-4">
@@ -1302,21 +1357,7 @@ app.get('/dns', (c) => {
 ${commonHead}
 <body class="p-4 md:p-8 flex justify-center items-start">
     <div class="max-w-6xl w-full space-y-6">
-        <header class="flex justify-between items-center glass-card p-4">
-             <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
-                CF Mini
-            </h1>
-            <nav class="hidden md:flex space-x-1">
-                <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
-                <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
-                <a href="/dns" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">DNS</a>
-                <a href="/ai" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">AI Gen</a>
-            </nav>
-            <div class="flex items-center gap-3">
-                <span class="text-xs text-gray-500 font-mono">${c.get('accountId')}</span>
-                <a href="/logout" class="text-sm text-red-300 hover:text-red-400">Logout</a>
-            </div>
-        </header>
+        ${renderHeader(c.get('accountId'), 'dns')}
 
         <div class="glass-card p-6">
             <div class="flex justify-between items-center mb-4">
@@ -1558,22 +1599,7 @@ app.get('/ai', (c) => {
 ${commonHead}
 <body class="flex flex-col h-screen overflow-hidden">
     <!-- Header -->
-    <header class="flex justify-between items-center glass-card p-4 mx-4 mt-4 md:mx-8 md:mt-8">
-            <h1 class="text-2xl font-extrabold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-purple-500 to-pink-500">
-            CF Mini AI
-        </h1>
-        <nav class="hidden md:flex space-x-1">
-            <a href="/" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Deploy</a>
-            <a href="/workers" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">Workers</a>
-            <a href="/dns" class="px-3 py-1 rounded-md hover:bg-white/5 text-gray-300 text-sm">DNS</a>
-            <a href="/ai" class="px-3 py-1 rounded-md bg-white/10 text-white text-sm">AI Gen</a>
-        </nav>
-        <div class="flex items-center gap-3">
-            <a href="/" class="md:hidden text-gray-300 hover:text-white">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-            </a>
-        </div>
-    </header>
+    ${renderHeader(c.get('accountId'), 'ai', 'mx-4 mt-4 md:mx-8 md:mt-8')}
 
     <!-- Main Content Area -->
     <main class="flex-1 overflow-hidden relative p-4 md:p-8 flex flex-col">
