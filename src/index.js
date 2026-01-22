@@ -984,6 +984,7 @@ If no vars are needed, return "vars": {}.
                     body: JSON.stringify({ prompt: fullPrompt, apiKey, model })
                 });
                 const data = await res.json();
+                console.log('API Response:', data);
 
                 if (data.success) {
                     try {
@@ -1628,6 +1629,18 @@ ${commonHead}
                 <div>
                     <input type="password" id="apiKey" class="input-field w-full p-3 rounded-lg text-center font-mono text-sm" placeholder="AIzaSy...">
                 </div>
+                <div>
+                    <select id="aiModel" class="input-field w-full p-3 rounded-lg text-center text-sm bg-black/50">
+                        <option value="gemini-3-pro-preview">Gemini 3.0 Pro (Preview)</option>
+                        <option value="gemini-3-flash-preview">Gemini 3.0 Flash (Preview)</option>
+                        <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                        <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                        <option value="gemini-2.0-flash-exp">Gemini 2.0 Flash (Exp)</option>
+                        <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                        <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                        <option value="gemini-1.0-pro">Gemini 1.0 Pro</option>
+                    </select>
+                </div>
                 <button onclick="connectAi()" id="btn-connect" class="btn-primary w-full py-3 rounded-lg font-bold text-white shadow-lg flex justify-center items-center gap-2">
                     Connect
                 </button>
@@ -1684,15 +1697,19 @@ ${commonHead}
 
         window.addEventListener('load', () => {
             const k = localStorage.getItem('gemini_key');
-            if (k) {
-                document.getElementById('apiKey').value = k;
-                // Auto connect if key exists
-                // connectAi(); // Optional: User might want to change it.
+            const m = localStorage.getItem('gemini_model');
+
+            if (k) document.getElementById('apiKey').value = k;
+            if (m) {
+                const sel = document.getElementById('aiModel');
+                if(sel) sel.value = m;
             }
         });
 
         async function connectAi() {
             const k = document.getElementById('apiKey').value.trim();
+            const m = document.getElementById('aiModel').value;
+
             if (!k) return alert('Enter API Key');
 
             const btn = document.getElementById('btn-connect');
@@ -1705,12 +1722,13 @@ ${commonHead}
                 const res = await fetch('/api/ai/generate', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ prompt: 'Reply with "OK"', apiKey: k })
+                    body: JSON.stringify({ prompt: 'Reply with "OK"', apiKey: k, model: m })
                 });
                 const data = await res.json();
 
                 if (data.success) {
                     localStorage.setItem('gemini_key', k);
+                    localStorage.setItem('gemini_model', m);
                     apiKey = k;
                     showChat();
                 } else {
@@ -1746,6 +1764,8 @@ ${commonHead}
         async function sendChat() {
             const input = document.getElementById('chat-input');
             const msg = input.value.trim();
+            const model = localStorage.getItem('gemini_model') || 'gemini-1.5-flash';
+
             if (!msg) return;
 
             // Append User Message
@@ -1771,7 +1791,7 @@ User: \${msg}
                 const res = await fetch('/api/ai/generate', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({ prompt, apiKey })
+                    body: JSON.stringify({ prompt, apiKey, model })
                 });
                 const data = await res.json();
 
